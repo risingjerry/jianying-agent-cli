@@ -82,6 +82,8 @@ git clone https://github.com/risingjerry/jianying-agent-cli.git && cd jianying-a
 | `jy key <in> --color 00FF00 --similarity --blend --bg` | 色度抠图（绿幕） |
 | `jy audio <in> --volume --fade-in --fade-out --bgm --replace --duck --loudnorm --denoise` | 音量/淡入淡出/BGM 混音/闪避/响度/降噪 |
 | `jy extract-audio <in> -o out.m4a\|mp3\|wav\|flac` | 抽音轨 |
+| `jy sfx index\|search\|list\|label\|forget` | **本地音效库**：索引你自己的 `~/Movies/jy-sfx` + 收割剪映已下载的音效（缓存里的普通 MP3），中英文检索 |
+| `jy sfx add <id\|名字> --at 2.3 -i in.mp4 -o out.mp4 [--gain -6] [--fade-in 0.05]` | 把一条音效混进成片指定时间点（保留原声，ffprobe 回验） |
 
 ### 3.4 字幕与文字
 | 命令 | 说明 |
@@ -137,6 +139,27 @@ git clone https://github.com/risingjerry/jianying-agent-cli.git && cd jianying-a
 | 文字/字幕样式 | **已验证可用**（颜色/字号/描边/位置） |
 | 转场 / 滤镜 / 画面特效 / 贴纸 / 美颜 / 抠像 / 花字 | 已按剪映 GUI 草稿的结构接线，并在作者机器（剪映 11.6，素材包已缓存）上逐帧像素验证（见 §9、`jy material status`）。**素材包未缓存或容器写错时，剪映会静默无效或渲染黑帧且不报错**——出片后务必用 `jy frame` 抽帧核对；只要确定性效果时用本地 `jy transition`/`jy filter` |
 
+
+### 3.8 音效库（`jy sfx`，纯本地）
+
+在剪映音效面板**点一次下载**，文件就是一个普通 MP3 落在
+`~/Movies/JianyingPro/User Data/Cache/music/`（实测 2,970–7,568 B / 0.34–0.47 s）。
+`jy sfx index` 把这些 + 你自己的 `~/Movies/jy-sfx/` 一起索引，之后 agent 可以「判断要不要音效 →
+`jy sfx search 叮` → `jy sfx add <id> --at <节拍点>` → 出片」全程无人：
+
+```bash
+jy sfx index                                   # 建/刷新索引（只读剪映缓存）
+jy sfx search 叮                                # 中文/英文、按名字+标签，返回 id/时长/大小
+jy sfx add 3aa742bdae1c --at 2.3 -i in.mp4 -o out.mp4 --gain -6 --fade-in 0.05
+jy sfx label 592be87899cd --name 叮-清脆提示 --tags ding,hint   # 缓存文件是 md5 名，命名一次即可搜
+jy sfx forget 592be87899cd                     # 只改索引，不删文件
+```
+
+- 混音链：`volume → afade → adelay → amix(duration=first,normalize=0)`，画面 `-c:v copy`，
+  回验 ffprobe + 比较音效窗口 RMS（被原声盖住会 warning）。
+- 选择器命中多个候选会**报错并列候选**，不会替你挑；输出默认拒绝覆盖（`--force`）。
+- 剪映缓存**只读**、不联网、不用额度；但那些音效是剪映缓存资产，**不可再分发**。详见 [docs/SFX.md](docs/SFX.md)。
+- 明确不做：把音效写进剪映草稿音轨（结构未逐字段验证）；现在的链路是成片后 ffmpeg 混音。
 
 ### 3.7 导出参数（`jy export`）
 `--resolution 480p|720p|1080p|1440p|2k|4k|8k|original|WxH` · `--fit contain|cover|stretch` ·

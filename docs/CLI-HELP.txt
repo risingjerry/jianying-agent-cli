@@ -1,5 +1,7 @@
 # jy CLI help snapshot
 
+## jy
+
 usage: jy [-h] [--verbose] [--async] command ...
 
 Headless, ffmpeg-backed local video CLI (jy.v1 JSON on stdout).
@@ -57,6 +59,8 @@ positional arguments:
     effects        list/search the 剪映 material catalog (offline, from local
                    caches)
     material       report which 剪映 material kinds jy can author and render
+    sfx            local sound effects: index/search 剪映's downloaded SFX, mix
+                   one into a video
 
 options:
   -h, --help       show this help message and exit
@@ -105,6 +109,36 @@ positional arguments:
 
 options:
   -h, --help  show this help message and exit
+
+## jy asset import
+
+usage: jy asset import [-h] [--verbose] [--force] path [path ...]
+
+positional arguments:
+  path
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+  --force     re-copy even if hashed
+
+## jy asset list
+
+usage: jy asset list [-h] [--verbose]
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+
+## jy asset prune
+
+usage: jy asset prune [-h] [--verbose] [--older-than-hours H] [--apply]
+
+options:
+  -h, --help            show this help message and exit
+  --verbose             stream ffmpeg logs to stderr
+  --older-than-hours H
+  --apply               actually delete (dry-run by default)
 
 ## jy audio
 
@@ -397,6 +431,113 @@ positional arguments:
 
 options:
   -h, --help   show this help message and exit
+
+## jy draft build
+
+usage: jy draft build [-h] [--verbose] -o PATH [--force] --spec FILE
+                      [--no-staging] [--fetch] [--staging-dir DIR]
+
+读 spec（canvas + clips[] + texts[] + 可选
+effects/filters/stickers）并生成剪映草稿。未知字段会报错（不会静默忽略）；clip 源文件默认 stage 到
+~/Movies/jy-staging 再引用，避免 ~/Downloads 触发 macOS TCC 弹窗卡死剪映（--no-staging 可关）。逐片
+段属性：transform{x,y,scale,rotation}/opacity/volume/crop{x,y,w,h}/speed/render_in
+dex；关键帧 keyframes[{property:KFTypeScaleX,
+points:[{time,values,left_control,right_control}]}]、速度曲线
+curve_speed{name,id,points:[{x,y}]}、蒙版
+mask{resource_type,name,resource_id,path,config}；文字动画
+texts[].animations[{type:in|out|loop, resource_id, name?, duration?}]。
+
+options:
+  -h, --help         show this help message and exit
+  --verbose          stream ffmpeg logs to stderr
+  -o, --output PATH
+  --force            overwrite an existing output
+  --spec FILE        JSON 时间线 spec
+  --no-staging       reference the original paths (no copy)
+  --fetch            download materials named in the spec that are not cached
+                     yet (`jy effects fetch`)
+  --staging-dir DIR  override the staging dir (default $JY_STAGING_DIR or
+                     ~/Movies/jy-staging)
+
+## jy draft list
+
+usage: jy draft list [-h] [--verbose] [--draft-root DIR] [--folder NAME]
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --draft-root DIR
+  --folder NAME     only drafts in this folder
+
+## jy draft rename
+
+usage: jy draft rename [-h] [--verbose] [--draft-root DIR] [--apply]
+                       name|id new-name
+
+positional arguments:
+  name|id
+  new-name
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --draft-root DIR
+  --apply
+
+## jy draft duplicate
+
+usage: jy draft duplicate [-h] [--verbose] [--name new-name]
+                          [--draft-root DIR] [--apply]
+                          name|id
+
+positional arguments:
+  name|id
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --name new-name
+  --draft-root DIR
+  --apply
+
+## jy draft delete
+
+usage: jy draft delete [-h] [--verbose] [--draft-root DIR] [--apply] [--yes]
+                       name|id
+
+positional arguments:
+  name|id
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --draft-root DIR
+  --apply
+  --yes             alias for --apply
+
+## jy draft move
+
+usage: jy draft move [-h] [--verbose] [--draft-root DIR] [--apply]
+                     name|id folder
+
+positional arguments:
+  name|id
+  folder
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --draft-root DIR
+  --apply
+
+## jy draft history
+
+usage: jy draft history [-h] [--verbose] [--draft-root DIR]
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --draft-root DIR
 
 ## jy subtitle
 
@@ -900,6 +1041,52 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
 
+## jy jobs list
+
+usage: jy jobs list [-h] [--verbose] [--limit N]
+                    [--state {queued,running,succeeded,failed,killed}]
+
+options:
+  -h, --help            show this help message and exit
+  --verbose             stream ffmpeg logs to stderr
+  --limit N
+  --state {queued,running,succeeded,failed,killed}
+                        only show jobs in this state
+
+## jy jobs status
+
+usage: jy jobs status [-h] [--verbose] job-id
+
+positional arguments:
+  job-id
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+
+## jy jobs wait
+
+usage: jy jobs wait [-h] [--verbose] [--timeout-ms MS] job-id
+
+positional arguments:
+  job-id
+
+options:
+  -h, --help       show this help message and exit
+  --verbose        stream ffmpeg logs to stderr
+  --timeout-ms MS  wait limit
+
+## jy jobs kill
+
+usage: jy jobs kill [-h] [--verbose] job-id
+
+positional arguments:
+  job-id
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+
 ## jy clean
 
 usage: jy clean [-h] [--verbose] [--dry-run] [--older-than-hours H]
@@ -945,6 +1132,31 @@ positional arguments:
 options:
   -h, --help       show this help message and exit
   --verbose        stream ffmpeg logs to stderr
+
+## jy effects list
+
+usage: jy effects list [-h] [--kind KIND] [--limit N]
+
+按 kind 分组统计并列出素材；--kind 只看一类。
+
+options:
+  -h, --help   show this help message and exit
+  --kind KIND  effect/filter/transition/face_beauty/sound/sticker/…
+  --limit N
+
+## jy effects search
+
+usage: jy effects search [-h] [--kind KIND] [--limit N] QUERY
+
+按中文名或资源 id 搜索；命中项可直接把 id 写进 spec 的 resource_id。
+
+positional arguments:
+  QUERY
+
+options:
+  -h, --help   show this help message and exit
+  --kind KIND
+  --limit N
 
 ## jy effects cached
 
@@ -994,6 +1206,15 @@ options:
   --offline         resolve from cached listings only
   --kind KIND       disambiguate a name shared by several kinds
 
+## jy effects params
+
+usage: jy effects params [-h]
+
+特效滑杆（effects_adjust_*）与美颜美体（face_adjust_*）的合法参数和值域。
+
+options:
+  -h, --help  show this help message and exit
+
 ## jy material
 
 usage: jy material [-h] [--verbose] action ...
@@ -1008,3 +1229,137 @@ positional arguments:
 options:
   -h, --help  show this help message and exit
   --verbose   stream ffmpeg logs to stderr
+
+## jy material status
+
+usage: jy material status [-h]
+
+options:
+  -h, --help  show this help message and exit
+
+## jy material register
+
+usage: jy material register [-h] [--root-meta FILE] [--name NAME] [--apply]
+                            draft-dir
+
+把 jy 写的草稿登记进剪映草稿列表：往 root_meta_info.json 的 all_draft_store 追加/刷新一条，并把
+draft_ids 同步为条目数（它是整数计数，不是数组）。默认只预演；--apply 才写入，且写入前自动备份索引。
+
+positional arguments:
+  draft-dir         含 draft_info.json 的草稿目录
+
+options:
+  -h, --help        show this help message and exit
+  --root-meta FILE  剪映草稿根的 root_meta_info.json（默认取草稿目录的上一级）
+  --name NAME       列表里显示的名字（默认用草稿 name）
+  --apply           真正写入索引（会先备份成 root_meta_info.json.bak-<epoch>）
+
+## jy sfx
+
+usage: jy sfx [-h] action ...
+
+本地音效库：索引你自己 ~/Movies/jy-sfx 里的音效，并收割剪映已下载的音效（User
+Data/Cache/music|effect|artistEffect|AITextTemplate 里的普通
+MP3/WAV）。纯本地、不联网、不写剪映缓存；索引存在 ~/Movies/jy-sfx/index.json。
+
+positional arguments:
+  action
+    index     build/refresh the index (user dir + 剪映 cache)
+    search    rank local sound effects by name/tags (中文 or English)
+    add       mix one sound effect into a video at --at seconds (keeps
+              original audio)
+    list      list indexed sound effects
+    forget    drop an entry from the index (never deletes the file)
+    label     name/tag an indexed entry so search can find it (cache files are
+              hash-named)
+
+options:
+  -h, --help  show this help message and exit
+
+## jy sfx index
+
+usage: jy sfx index [-h] [--verbose] [--source DIR]
+
+扫描 $JY_SFX_DIR（默认 ~/Movies/jy-sfx，递归）和剪映缓存目录，用 ffprobe
+记录时长/采样率/声道/码率，按名字生成中英文标签，原子写入 index.json。
+
+options:
+  -h, --help    show this help message and exit
+  --verbose     stream ffmpeg logs to stderr
+  --source DIR  额外的音效目录（可重复）
+
+## jy sfx search
+
+usage: jy sfx search [-h] [--verbose] [--limit N] [--max-duration S]
+                     [--min-duration S] [--source {user,cache,extra}]
+                     QUERY
+
+按名字和标签检索（子串 + token 重叠 + 同义词），可按来源/时长过滤；返回 id、时长、大小，方便直接接 `jy sfx add`。
+
+positional arguments:
+  QUERY
+
+options:
+  -h, --help            show this help message and exit
+  --verbose             stream ffmpeg logs to stderr
+  --limit N
+  --max-duration S
+  --min-duration S
+  --source {user,cache,extra}
+
+## jy sfx add
+
+usage: jy sfx add [-h] [--verbose] --at S -i VIDEO -o OUT [--gain DB]
+                  [--fade-in S] [--fade-out S] [--force]
+                  id|name
+
+把一条音效混进已有视频的指定时间点：ffmpeg 用 volume/afade/adelay + amix(normalize=0)
+保留原声，ffprobe 回验输出，并比较音效窗口的 RMS 判断有没有被盖住。匹配到多个候选时直接报错并列出候选，不会替你挑。
+
+positional arguments:
+  id|name
+
+options:
+  -h, --help         show this help message and exit
+  --verbose          stream ffmpeg logs to stderr
+  --at S             时间线上的绝对时间点（秒）
+  -i, --input VIDEO  要混音的视频
+  -o, --output OUT
+  --gain DB
+  --fade-in S
+  --fade-out S
+  --force
+
+## jy sfx list
+
+usage: jy sfx list [-h] [--verbose] [--source {user,cache,extra}] [--limit N]
+
+options:
+  -h, --help            show this help message and exit
+  --verbose             stream ffmpeg logs to stderr
+  --source {user,cache,extra}
+  --limit N
+
+## jy sfx forget
+
+usage: jy sfx forget [-h] [--verbose] id|name
+
+positional arguments:
+  id|name
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+
+## jy sfx label
+
+usage: jy sfx label [-h] [--verbose] --name NAME [--tags a,b] id|resource_id
+
+positional arguments:
+  id|resource_id
+
+options:
+  -h, --help      show this help message and exit
+  --verbose       stream ffmpeg logs to stderr
+  --name NAME
+  --tags a,b

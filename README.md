@@ -91,6 +91,7 @@ Then just ask: *"Cut these three clips into a 15-second vertical video with a ti
 | Audio | `audio` (volume, fades, BGM mix/replace, ducking, loudnorm, denoise) `extract-audio` |
 | Output | `export` `gif` `frame` `cover` `batch` |
 | 剪映 engine | `draft build` `render` `effects list/search/params` `material status/register` `fonts` |
+| Sound effects | `sfx index/search/add/list/label/forget` — harvest the SFX you downloaded in 剪映, mix one into a video at `--at` (no network, no GUI) |
 | Projects | `draft list/rename/duplicate/delete/move/history` `asset import/list/prune` |
 | Unattended | `--async` + `jobs list/status/wait/kill` `clean` |
 
@@ -110,15 +111,34 @@ jy <verb> ───┤
 - **jianying engine**: writes a timeline as a plain 剪映 draft and asks the **running** 剪映 app to export it through the localhost bridge it already exposes. No UI automation, no pointer movement. A focus guard hands the foreground back to your app if 剪映 raises its window. Protocol notes: [docs/BRIDGE.md](docs/BRIDGE.md).
 - `jy` itself makes **no network requests**. 剪映 may talk to its own servers (material downloads); that traffic is the app's.
 
+### Sound effects, locally
+
+Downloading a sound effect once in 剪映's panel leaves a **plain, playable MP3** in
+`~/Movies/JianyingPro/User Data/Cache/music/` (measured: 2,970–7,568 B, 0.34–0.47 s, 128/65 kbps).
+`jy sfx index` harvests those files (read-only) plus your own `~/Movies/jy-sfx/`, and `jy sfx add`
+mixes one into a finished video at an exact time point with `amix(normalize=0)`, then re-probes the
+output and compares window RMS so a drowned-out effect is reported instead of silently shipped.
+
+```bash
+jy sfx index                                        # user dir + 剪映 cache
+jy sfx search 叮                                     # 中文 or English, returns id/duration/bytes
+jy sfx add 3aa742bdae1c --at 2.3 -i in.mp4 -o out.mp4 --gain -6
+jy sfx label 592be87899cd --name 叮-清脆提示 --tags ding,hint   # cache files are md5-named
+```
+
+No network, no GUI, no credits. These are **剪映-cached assets**: fine locally, not redistributable.
+Details, ranking rules and the read-only guarantee: [docs/SFX.md](docs/SFX.md).
+
 ## What works, honestly
 
 | Capability | Status |
 |---|---|
-| Local editing, encoding, subtitles, text, transitions, grading, keying, audio, batch | Works offline; covered by `tests/smoke.sh` (260 checks) in CI on macOS |
+| Local editing, encoding, subtitles, text, transitions, grading, keying, audio, batch | Works offline; covered by `tests/smoke.sh` (267 checks) in CI on macOS |
 | 剪映 Chinese names for transitions / filters | Mapped to ffmpeg approximations, each reported with a fidelity grade — **not** the 剪映 material library |
 | `beautify` | Global soft-skin look, **not** face-aware beauty |
 | `key` | Single-colour chroma key, **not** smart matting |
 | `asr` | Local whisper.cpp only; reports `UNSUPPORTED` if no binary/model; never uploads audio |
+| `sfx` | Indexes local audio only (your dir + 剪映's download cache, read-only); mixing is ffmpeg — it never writes to a 剪映 draft audio track |
 | 剪映 render of clips + styled text | Verified with 剪映专业版 11.6 on macOS (frame diff) |
 | 剪映 materials (effects, transitions, filters, stickers, 花字, beauty, matting, keyframes, masks, color wheels, text animations) | Draft structure matches what the 剪映 GUI writes; pixel-verified on the author's machine with materials already cached. Uncached materials can render as no change or a black layer **without an error** — always check frames |
 | VIP / SVIP materials | Need your own membership. `jy` names the refused material and never bypasses entitlement checks |

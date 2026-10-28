@@ -116,6 +116,7 @@ def doctor(ctx, args):
     from . import focus as focus_module, jobs as jobs_module
     from .verbs import asr as asr_verbs
     from .verbs import grade as grade_verbs
+    from .verbs import sfx as sfx_verbs
 
     hdr_report = {"tonemap": None}
     if ctx.tool:
@@ -136,6 +137,7 @@ def doctor(ctx, args):
         "focus": focus_module.state(),
         "jobs": jobs_module.jobs_state(),
         "asr": asr_verbs.state(),
+        "sfx": sfx_verbs.doctor_block(),
         "registry": getattr(ctx, "registry", {}),
         "entitlements": {
             "tier_readable_offline": False,

@@ -2430,6 +2430,186 @@ else
 fi
 
 echo
+echo "== sfx (index / search / add / label / forget, synthetic fixtures only)"
+cat > "$WORK/sfx_check.py" <<'PY'
+"""`jy sfx` checks — synthetic fixtures only, no 剪映 needed."""
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+JY, WORK, FF = sys.argv[1], Path(sys.argv[2]), sys.argv[3]
+failures = []
+lib = WORK / "sfx-lib"
+extra = WORK / "sfx-extra"
+env = dict(os.environ)
+env["JY_SFX_DIR"] = str(lib)
+
+
+def check(name, condition, detail=""):
+    if not condition:
+        failures.append(f"{name}: {detail}")
+
+
+def run(args, extra_env=None, timeout=180):
+    environ = dict(env)
+    if extra_env:
+        environ.update(extra_env)
+    done = subprocess.run([JY, *args], capture_output=True, text=True, env=environ, timeout=timeout)
+    try:
+        payload = json.loads(done.stdout or "{}")
+    except json.JSONDecodeError:
+        payload = {"_raw": done.stdout[:300], "_stderr": done.stderr[:300]}
+    return done.returncode, payload
+
+
+def ffmpeg(*args):
+    done = subprocess.run([FF, *args], capture_output=True, text=True)
+    if done.returncode != 0:
+        raise SystemExit(f"fixture ffmpeg failed: {done.stderr[-200:]}")
+
+
+shutil.rmtree(lib, ignore_errors=True)
+shutil.rmtree(extra, ignore_errors=True)
+lib.mkdir(parents=True)
+extra.mkdir(parents=True)
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "sine=frequency=1800:duration=0.4",
+       "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", "-y", str(lib / "叮-提示音.wav"))
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "sine=frequency=300:duration=0.8",
+       "-ac", "2", "-c:a", "libmp3lame", "-b:a", "128k", "-y", str(lib / "whoosh-转场.mp3"))
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "sine=frequency=900:duration=0.3",
+       "-ac", "2", "-y", str(lib / "提示音A.wav"))
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "sine=frequency=1000:duration=0.3",
+       "-ac", "2", "-y", str(lib / "提示音B.wav"))
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "sine=frequency=700:duration=0.2",
+       "-ac", "2", "-y", str(extra / "extra-beep.wav"))
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=4",
+       "-f", "lavfi", "-i", "sine=frequency=440:duration=4",
+       "-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-pix_fmt", "yuv420p",
+       "-c:a", "aac", "-shortest", "-y", str(WORK / "sfx-base.mp4"))
+ffmpeg("-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30:duration=2",
+       "-c:v", "libx264", "-preset", "veryfast", "-crf", "30", "-pix_fmt", "yuv420p",
+       "-y", str(WORK / "sfx-silent.mp4"))
+
+# -- index ---------------------------------------------------------------
+rc, payload = run(["sfx", "index", "--source", str(extra)])
+data = payload.get("data") or {}
+check("sfx index ok", payload.get("ok") is True, str(payload.get("error"))[:200])
+counts = data.get("counts") or {}
+check("index counts user files", counts.get("user") == 4, str(counts))
+check("index counts --source dir", counts.get("extra") == 1, str(counts))
+check("index writes index.json", (lib / "index.json").is_file(), "missing index.json")
+entries = data.get("entries") or []
+names = {entry["name"]: entry for entry in entries}
+check("index derived name from filename", "叮 提示音" in names, str(sorted(names))[:200])
+ding = names.get("叮 提示音") or {}
+check("index probes duration/channels", ding.get("duration_s") == 0.4 and ding.get("channels") == 2, str(ding)[:200])
+check("index derives english tags", {"ding", "hint"} & set(ding.get("tags") or []) == {"ding", "hint"}, str(ding.get("tags"))[:160])
+check("index keeps id/path/bytes", bool(ding.get("id")) and Path(ding.get("path", "")).is_file() and ding.get("bytes"), str(ding)[:160])
+
+# cache harvest must be read-only: count + mtimes unchanged
+cache_root = Path.home() / "Movies/JianyingPro/User Data/Cache"
+before = {str(p): p.stat().st_mtime for p in cache_root.rglob("*") if p.suffix.lower() in (".mp3", ".wav")} if cache_root.is_dir() else {}
+rc, payload = run(["sfx", "index", "--source", str(extra)])
+after = {str(p): p.stat().st_mtime for p in cache_root.rglob("*") if p.suffix.lower() in (".mp3", ".wav")} if cache_root.is_dir() else {}
+check("sfx index leaves 剪映 cache untouched", before == after, "cache mtime/set changed")
+
+# -- search --------------------------------------------------------------
+rc, payload = run(["sfx", "search", "叮"])
+results = (payload.get("data") or {}).get("results") or []
+check("search 叮 finds it", results and results[0]["name"] == "叮 提示音", str(results)[:200])
+rc, payload = run(["sfx", "search", "ding"])
+results = (payload.get("data") or {}).get("results") or []
+# 提示音* also maps to the "ding" tag (a hint sound), so assert membership not rank
+check("search by english tag", any(row["name"] == "叮 提示音" for row in results), str(results)[:200])
+rc, payload = run(["sfx", "search", "whoosh"])
+results = (payload.get("data") or {}).get("results") or []
+check("search whoosh finds the mp3", results and "whoosh" in results[0]["name"], str(results)[:200])
+rc, payload = run(["sfx", "search", "提示音", "--max-duration", "0.35"])
+results = (payload.get("data") or {}).get("results") or []
+check("search duration filter", all(float(row["duration_s"]) <= 0.35 for row in results) and results, str(results)[:200])
+rc, payload = run(["sfx", "search", "zzz-no-match"])
+check("empty search explains itself", any("没有匹配" in w for w in payload.get("warnings") or []), str(payload.get("warnings"))[:160])
+
+# -- ambiguity -----------------------------------------------------------
+rc, payload = run(["sfx", "search", "提示音"])
+check("提示音 has several candidates", (payload.get("data") or {}).get("matches", 0) >= 2, str(payload.get("data"))[:160])
+rc, payload = run(["sfx", "add", "提示音", "--at", "1.0", "-i", str(WORK / "sfx-base.mp4"), "-o", str(WORK / "sfx-amb.mp4")])
+error = payload.get("error") or {}
+check("ambiguous add refuses (rc=2)", rc == 2, f"rc={rc}")
+check("ambiguous add lists candidates", len((error.get("details") or {}).get("candidates") or []) >= 2, str(error)[:200])
+check("ambiguous add writes nothing", not (WORK / "sfx-amb.mp4").exists(), "output created on ambiguity")
+
+# -- add -----------------------------------------------------------------
+ding_id = ding["id"]
+out = WORK / "sfx-mixed.mp4"
+rc, payload = run(["sfx", "add", ding_id, "--at", "1.2", "--gain", "3", "-i", str(WORK / "sfx-base.mp4"), "-o", str(out)])
+data = payload.get("data") or {}
+check("sfx add ok", payload.get("ok") is True, str(payload.get("error"))[:220])
+check("sfx add keeps duration", data.get("video", {}).get("duration_s") == 4.0, str(data.get("video"))[:160])
+check("sfx add keeps one audio stream", data.get("video", {}).get("audio_streams") == 1, str(data.get("video"))[:160])
+check("sfx add reports placement", (data.get("placement") or {}).get("at_s") == 1.2, str(data.get("placement"))[:160])
+verification = data.get("verification") or {}
+check("sfx add boosts the window rms",
+      verification.get("window_rms_db") is not None
+      and verification.get("original_window_rms_db") is not None
+      and verification["window_rms_db"] > verification["original_window_rms_db"] + 0.5,
+      str(verification)[:200])
+probe = subprocess.run([str(Path(FF).with_name("ffprobe")), "-v", "error", "-select_streams", "a",
+                        "-show_entries", "stream=codec_name", "-of", "csv=p=0", str(out)],
+                       capture_output=True, text=True)
+check("ffprobe sees the mixed audio", probe.stdout.strip() == "aac", probe.stdout.strip()[:80])
+
+rc, payload = run(["sfx", "add", ding_id, "--at", "1.2", "-i", str(WORK / "sfx-base.mp4"), "-o", str(out)])
+check("sfx add refuses to overwrite", (payload.get("error") or {}).get("code") == "VALIDATION", str(payload.get("error"))[:160])
+
+silent_out = WORK / "sfx-silent-mixed.mp4"
+rc, payload = run(["sfx", "add", ding_id, "--at", "0.3", "-i", str(WORK / "sfx-silent.mp4"), "-o", str(silent_out)])
+check("sfx add works on a silent video", payload.get("ok") is True, str(payload.get("error"))[:200])
+check("silent-video path warns", any("没有音轨" in w for w in payload.get("warnings") or []), str(payload.get("warnings"))[:160])
+
+rc, payload = run(["sfx", "add", ding_id, "--at", "99", "-i", str(WORK / "sfx-base.mp4"), "-o", str(WORK / "sfx-oob.mp4")])
+check("--at beyond duration refused", (payload.get("error") or {}).get("code") == "VALIDATION", str(payload.get("error"))[:160])
+rc, payload = run(["sfx", "add", "no-such-sound-xyz", "--at", "1", "-i", str(WORK / "sfx-base.mp4"), "-o", str(WORK / "sfx-nf.mp4")])
+check("unknown selector NOT_FOUND", (payload.get("error") or {}).get("code") == "NOT_FOUND", str(payload.get("error"))[:160])
+
+# -- label / list / forget ----------------------------------------------
+rc, payload = run(["sfx", "label", ding_id, "--name", "叮-点击", "--tags", "click,ui"])
+data = payload.get("data") or {}
+check("sfx label renames the entry", (data.get("entry") or {}).get("name") == "叮-点击", str(data)[:160])
+check("sfx label adds tags", {"click", "ui"} <= set((data.get("entry") or {}).get("tags") or []), str(data)[:160])
+rc, payload = run(["sfx", "search", "click"])
+check("labelled entry is searchable", bool((payload.get("data") or {}).get("results")), str(payload.get("data"))[:160])
+
+rc, payload = run(["sfx", "list"])
+data = payload.get("data") or {}
+check("sfx list shows counts", (data.get("counts") or {}).get("total", 0) >= 5, str(data.get("counts")))
+rc, payload = run(["sfx", "forget", ding_id])
+data = payload.get("data") or {}
+check("sfx forget drops the entry", len(data.get("forgot") or []) == 1, str(data)[:160])
+check("sfx forget keeps the file", Path(ding["path"]).is_file(), "file deleted")
+rc, payload = run(["sfx", "search", "click"])
+check("forgotten entry is gone from search", not (payload.get("data") or {}).get("results"), str(payload.get("data"))[:160])
+
+# -- doctor --------------------------------------------------------------
+rc, payload = run(["doctor"])
+sfx_state = (payload.get("data") or {}).get("sfx") or {}
+check("doctor reports sfx", "indexed" in sfx_state and "cache_audio_files" in sfx_state, str(sfx_state)[:200])
+check("doctor counts the index", sfx_state.get("indexed", 0) >= 4, str(sfx_state)[:200])
+
+print(json.dumps({"ok": not failures, "failures": failures,
+                  "indexed": (payload.get("data") or {}).get("sfx", {}).get("indexed")}, ensure_ascii=False))
+raise SystemExit(0 if not failures else 1)
+PY
+if sfx_out="$("$PY" "$WORK/sfx_check.py" "$JY" "$WORK" "$FF" 2>&1)"; then
+    pass "sfx: index + search + mix + label/forget [$(echo "$sfx_out" | head -c 200)]"
+else
+    fail "sfx checks" "$(echo "$sfx_out" | tail -c 700)"
+fi
+
+echo
 echo "----------------------------------------"
 printf 'smoke summary: %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"
 if [[ "$FAIL" -ne 0 ]]; then

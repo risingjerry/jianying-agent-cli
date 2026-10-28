@@ -186,6 +186,31 @@ jy material register <draft-dir>            # 把 jy 草稿注册进剪映的草
 
 按扩展名选编码器：m4a→aac、mp3→libmp3lame、wav→pcm_s16le、flac→flac；有损格式默认 192k（`--bitrate` 可改）。
 
+### `jy sfx index|search|add|list|label|forget`
+
+本地音效库（不联网、不开剪映、不用额度）。两个来源：`$JY_SFX_DIR`（默认 `~/Movies/jy-sfx/`，递归，
+文件名即搜索名）和剪映缓存 `User Data/Cache/{music,effect,artistEffect,AITextTemplate}`（**只读收割**，
+文件名是 md5，条目保留 `downLoadcfg` 里的 `resourceId`）。
+
+```bash
+jy sfx index [--source DIR]...
+jy sfx search 叮 [--limit 10] [--max-duration 2] [--source user|cache|extra]
+jy sfx add <id|名字> --at 2.3 -i in.mp4 -o out.mp4 [--gain -6] [--fade-in 0.05] [--fade-out 0.1] [--force]
+jy sfx list [--source ...] [--limit N]
+jy sfx label <id> --name 叮-清脆提示 [--tags ding,hint]
+jy sfx forget <id|名字>
+```
+
+- 索引：`~/Movies/jy-sfx/index.json`（`jy.sfx.v1`，原子写）；条目
+  `{id(sha256 前 12), path, name, source, resource_id, duration_s, sample_rate, channels, bitrate, bytes, mtime, tags[], labelled}`。
+- 检索：名字相等 1.0 → 名字包含 0.8 → 标签相等 0.75 → 标签包含 0.55 → token 重叠（≥2 字符）×0.25–0.7 →
+  `resource_id` 0.4；内置中文→英文同义词（叮→ding/bell/hint、转场→whoosh、砰→bang/hit…）。
+- 混音：`volume/afade/adelay` + `amix(duration=first,normalize=0)` 保留原声；`-c:v copy`；
+  输出 ffprobe 回验 + `astats` 比较窗口 RMS（见 `verification.window_rms_db` vs `original_window_rms_db`）。
+- 歧义：匹配到多个候选 → `VALIDATION` + `details.candidates`（id/名字/时长/大小），绝不替你挑。
+- 只读保证：不写/不删剪映缓存；`forget` 只改索引。音效是剪映缓存资产，**不可再分发**。
+- `jy doctor` → `data.sfx{index_path, index_present, indexed, sources, cache_audio_files, labelled, index_mtime}`。
+
 ### `jy frame <in> --at 3.5 -o cover.jpg`
 
 `--at` 支持秒数（`3.5`）或百分比（`10%`），输出 `.jpg`/`.png` 单帧。`--at` 超出时长会 `VALIDATION`。
