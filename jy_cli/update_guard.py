@@ -80,7 +80,16 @@ def read_config():
                 key, _, value = line.partition("=")
                 values[key.strip()] = value.strip()
     except OSError:
-        return {"path": str(CONFIG), "readable": False, "values": {}}
+        # Keep the shape stable: `status` always reports the three keys, null when the
+        # config file does not exist (CI, or 剪映 never launched on this machine).
+        return {
+            "path": str(CONFIG),
+            "readable": False,
+            "auto_update": None,
+            "silent_upgrade": None,
+            "interval_min": None,
+            "values": {},
+        }
     return {
         "path": str(CONFIG),
         "readable": True,
