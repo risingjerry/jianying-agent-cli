@@ -1940,15 +1940,29 @@ check("update status names the app",
 check("update status reports the toggle", "auto_update" in (data.get("config") or {}),
       str(data.get("config"))[:200])
 
+installed = ug.APP.is_dir() and ug.bundle_id() == ug.BUNDLE_ID
 rc, payload = run(["update", "lock"])
 data = payload.get("data") or {}
-check("update lock is dry-run by default",
-      payload.get("outcome") == "preview" and data.get("applied") is False, str(payload.get("outcome")))
-check("update lock preview lists the pending state", "before" in data, str(data)[:200])
+if installed:
+    check("update lock is dry-run by default",
+          payload.get("outcome") == "preview" and data.get("applied") is False,
+          str(payload.get("outcome")))
+    check("update lock preview lists the pending state", "before" in data, str(data)[:200])
+else:
+    # No 剪映 on this machine (CI): refusing loudly is the correct behaviour.
+    check("update lock refuses a machine without 剪映",
+          (payload.get("error") or {}).get("code") == "UNSUPPORTED", str(payload.get("error"))[:200])
 
 rc, payload = run(["update", "unlock"])
-check("update unlock is dry-run by default", payload.get("outcome") == "preview",
-      str(payload.get("outcome")))
+if not installed:
+    check("update unlock refuses a machine without 剪映",
+          (payload.get("error") or {}).get("code") == "UNSUPPORTED", str(payload.get("error"))[:200])
+elif ug._manifests():
+    check("update unlock is dry-run by default", payload.get("outcome") == "preview",
+          str(payload.get("outcome")))
+else:
+    check("update unlock explains a missing manifest",
+          (payload.get("error") or {}).get("code") == "NOT_FOUND", str(payload.get("error"))[:200])
 
 # the flag machinery itself, on a throwaway tree (never the installed app)
 fixture = WORK / "update-fixture"
