@@ -82,8 +82,10 @@ Material names are 剪映's Chinese names; search with short keywords.
    剪映 material and re-render — don't switch to a local approximation.
 2. **Report which 剪映 materials you used** (name + kind) and which steps were local preprocessing.
 3. **Touch only your own drafts.** Build drafts in your working directory (`draft build -o`); never edit
-   or list the user's own 剪映 drafts; delete the drafts you created when done. Downloaded material
-   packages staying in 剪映's cache is expected.
+   the user's own 剪映 drafts, and don't enumerate them; delete the drafts you created when done. Downloaded
+   material packages staying in 剪映's cache is expected. The one exception is an explicit user request to
+   put a draft into 剪映's home list: then use `jy draft import/register` (see below), which only touches
+   the index and leaves every existing draft alone.
 4. One render per draft at a time. 剪映's export may raise its window; `jy render`'s focus guard hands
    focus back. **Never click the 剪映 UI.**
 5. Check the output for account names, avatars or watermarks before delivering.
@@ -127,8 +129,18 @@ Material names are 剪映's Chinese names; search with short keywords.
   (`source: live`) and falls back to the locally cached listings (`source: cache`, or `--offline`) with a
   warning when the catalog is unreachable; if nothing matches, try a synonym or a similar material.
 - **One render at a time**: a cross-process lock serialises renders; never render in parallel.
+- **剪映's own updater may be frozen on purpose.** `jy update status` shows whether auto-update is off and
+  the installed bundle is `UF_IMMUTABLE`-locked (the owner can `jy update unlock --apply` to install an
+  update by hand). Never try to update or reinstall 剪映 to "fix" a render error — read `error.code` first;
+  an update would also change the version the draft format was verified against.
 - After 剪映 opens a `jy` draft it may migrate it to a multi-timeline layout (`Timelines/<uuid>/`);
   `jy` resolves that automatically.
+- **Getting the draft into 剪映's home list** (so a human can fine-tune it by hand): `draft build -o <draft
+  root>/name` registers automatically; for a draft living in a project folder use
+  `jy draft import <dir> --name "<title>" --apply`. Do it with 剪映 **closed**: a running 剪映 rewrites
+  `root_meta_info.json` from memory when it saves/closes and can drop the new entry, so the order is
+  quit 剪映 → `--apply` → open 剪映. Both verbs are dry-run by default, back the index up twice, and never
+  overwrite an existing draft folder.
 
 ## Local engine: tooling, not a substitute
 

@@ -20,7 +20,7 @@ import uuid
 from pathlib import Path
 
 from .. import draft as drafts
-from .. import jianying_commands
+from .. import draft_index, jianying_commands
 from ..envelope import JyError
 from . import _draft_spec as draft_spec
 from .. import jianying_cache
@@ -196,6 +196,7 @@ def _trimmed(document, entry):
         "duration_source": duration_source,
         "modified": entry.get("tm_draft_modified"),
         "materials_bytes": entry.get("draft_timeline_materials_size"),
+        "invisible": bool(entry.get("draft_is_invisible")),
         "in_root": _inside(Path(_entry_path(entry)).parent, _entry_path(entry)) if _entry_path(entry) else False,
     }
 
@@ -267,7 +268,93 @@ def draft_build(ctx, args):
         }
     data["clip_properties"] = patched or {"applied": 0, "skipped": False}
     data["materials_resolved"] = resolved
+    if data.get("draft_info"):
+        folder = Path(data["draft_info"]).resolve().parent
+        try:
+            document = json.loads(Path(data["draft_info"]).read_text("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            document = None
+        cover = draft_index.write_cover(folder, document, tool=getattr(ctx, "tool", None)) if document else None
+        if cover:
+            data["cover"] = cover
+    data["registration"] = _auto_register(ctx, data.get("draft_info"), args)
     return outcome, data
+
+
+def _auto_register(ctx, draft_info, args):
+    """Register a draft that was built straight into 剪映's draft root.
+
+    A draft outside the root cannot be listed without copying it in (that is
+    ``jy draft import``), so this is a no-op there — reported, not guessed.
+    """
+    if not draft_info:
+        return {"registered": False, "reason": "没有 draft_info.json 路径"}
+    if getattr(args, "no_register", False):
+        return {"registered": False, "reason": "--no-register"}
+    folder = Path(draft_info).resolve().parent
+    index = folder.parent / INDEX_NAME
+    if not index.is_file():
+        return {"registered": False,
+                "reason": f"草稿不在剪映草稿根目录下（{index} 不存在）：用 `jy draft import` 放进去",
+                "draft_root_index": str(index)}
+    try:
+        outcome = draft_index.register(folder, root_meta=index, apply=True)
+    except JyError as exc:
+        ctx.warnings.append(
+            f"草稿已生成，但没登记进剪映草稿列表（{exc.code}）：{exc.message}。"
+            f"稍后可用 `jy draft register {folder} --apply` 重试。"
+        )
+        return {"registered": False, "error": {"code": exc.code, "message": exc.message}}
+    if outcome.get("jianying_running") and not getattr(args, "no_register", False):
+        ctx.warnings.append(
+            "剪映正在运行：它会把新出现的草稿目录按自己的规则收纳（新 draft_id、draft_is_invisible=true），"
+            "退出剪映后跑一次 `jy draft register <草稿> --apply` 可修正。"
+        )
+    ctx.warnings.append(
+        f"已登记进剪映草稿列表（{outcome['action']}，draft_ids "
+        f"{outcome['draft_ids']['before']}→{outcome['draft_ids']['after']}）：{folder}"
+        + ("。剪映正在运行：请退出并重开剪映再看列表" if outcome.get("jianying_running") else "")
+    )
+    return outcome
+
+
+def draft_register(ctx, args):
+    """Add one draft folder to 剪映's home list (dry-run unless --apply)."""
+    data = draft_index.register(
+        args.draft,
+        root_meta=args.root_meta,
+        draft_root=args.draft_root,
+        name=args.name,
+        apply=bool(args.apply),
+    )
+    if data.get("jianying_running"):
+        ctx.warnings.append(
+            "剪映正在运行：它会在下次写索引时用内存里的草稿列表覆盖文件，登记可能看不到。"
+            "退出并重开剪映后再看首页列表。"
+        )
+    if not data.get("draft_inside_root"):
+        ctx.warnings.append(
+            f"草稿目录不在草稿根目录内（{data['draft']}）：剪映可能只扫草稿根目录。"
+            "要真正出现在首页列表，用 `jy draft import` 复制进草稿根目录。"
+        )
+    return ("executed" if data["applied"] else "preview"), data
+
+
+def draft_import(ctx, args):
+    """Copy an external draft folder into the draft root, then register it."""
+    data = draft_index.import_draft(
+        args.draft,
+        draft_root=args.draft_root,
+        root_meta=args.root_meta,
+        name=args.name,
+        move=bool(args.move),
+        apply=bool(args.apply),
+    )
+    if data.get("registration", {}).get("jianying_running"):
+        ctx.warnings.append(
+            "剪映正在运行：登记可能被它内存里的列表覆盖；退出并重开剪映后再看首页列表。"
+        )
+    return ("executed" if data["applied"] else "preview"), data
 
 
 # ---------------------------------------------------------------------------
@@ -525,7 +612,44 @@ def register(r):
     build.add_argument(
         "--staging-dir", metavar="DIR", help="override the staging dir (default $JY_STAGING_DIR or ~/Movies/jy-staging)"
     )
+    build.add_argument(
+        "--no-register", action="store_true",
+        help="do not add the draft to 剪映's home list (default: register when -o is inside the draft root)",
+    )
     r.bind(build, "draft build", draft_build)
+
+    registration = sub.add_parser(
+        "register",
+        parents=[r.verbose_parent],
+        help="add a draft folder to 剪映's home list (dry-run unless --apply)",
+        description="把草稿登记进剪映首页草稿列表：改写 <草稿根>/root_meta_info.json 的 all_draft_store，"
+        "并维护 draft_ids 计数器（它不是条目数）。默认只预演；--apply 才写，写前双备份 + 原子替换，"
+        "读取后索引被剪映改动时拒绝覆盖。",
+    )
+    registration.add_argument("draft", metavar="draft-dir", help="含 draft_info.json 的草稿目录")
+    registration.add_argument("--name", help="列表里显示的名字（默认用草稿 name）")
+    registration.add_argument("--draft-root", metavar="DIR",
+                              help="剪映草稿根目录（默认取草稿目录的上一级，再退回本机安装路径）")
+    registration.add_argument("--root-meta", metavar="FILE", help="直接指定 root_meta_info.json")
+    registration.add_argument("--apply", action="store_true", help="真正写入索引")
+    r.bind(registration, "draft register", draft_register)
+
+    importer = sub.add_parser(
+        "import",
+        parents=[r.verbose_parent],
+        help="copy an external draft folder into 剪映's draft root and list it",
+        description="把草稿根目录之外的剪映草稿（例如项目文件夹里 `jy draft build` 出来的草稿）"
+        "复制进剪映草稿根目录、改写草稿里记录的路径、再登记进首页列表。默认 dry-run；--apply 才复制并写入；"
+        "目标目录永不覆盖（重名自动加 -2）。",
+    )
+    importer.add_argument("draft", metavar="draft-dir", help="草稿根目录之外的草稿目录")
+    importer.add_argument("--name", help="导入后的草稿名（默认沿用目录名）")
+    importer.add_argument("--draft-root", metavar="DIR", help="剪映草稿根目录")
+    importer.add_argument("--root-meta", metavar="FILE", help="直接指定 root_meta_info.json")
+    importer.add_argument("--move", action="store_true",
+                          help="移动而不是复制（源目录会被移走）")
+    importer.add_argument("--apply", action="store_true", help="真正复制/移动并登记")
+    r.bind(importer, "draft import", draft_import)
 
     listing = sub.add_parser(
         "list", parents=[r.verbose_parent], help="list drafts from root_meta_info.json"

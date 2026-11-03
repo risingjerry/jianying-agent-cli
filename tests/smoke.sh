@@ -1823,6 +1823,158 @@ rc, payload = run(["draft", "delete", "evil", "--apply"])
 check("outside-root draft refused", (payload.get("error") or {}).get("code") == "VALIDATION", str(payload.get("error"))[:160])
 check("outside-root folder untouched", outside.is_dir(), "outside folder moved")
 
+# ---------------------------------------------------------------- C4 draft register + import
+regroot = WORK / "regroot"
+shutil.rmtree(regroot, ignore_errors=True)
+regroot.mkdir(parents=True)
+(regroot / "root_meta_info.json").write_text(
+    json.dumps({"all_draft_store": [], "draft_ids": 0, "root_path": str(regroot)}), "utf-8"
+)
+
+reg_spec = WORK / "reg_spec.json"
+reg_spec.write_text(
+    json.dumps({"canvas": {"width": 320, "height": 568, "fps": 30},
+                "clips": [{"path": str(WORK / "a.mp4"), "duration": 1.0}]}),
+    "utf-8",
+)
+ext = WORK / "ext-draft"
+shutil.rmtree(ext, ignore_errors=True)
+rc, payload = run(["draft", "build", "--spec", str(reg_spec), "-o", str(ext), "--force"])
+data = payload.get("data") or {}
+check("build outside the draft root skips registration",
+      (data.get("registration") or {}).get("registered") is False, str(data.get("registration"))[:200])
+check("build writes draft_meta_info.json", (ext / "draft_meta_info.json").is_file(), "meta missing")
+check("build writes a list cover", (ext / "draft_cover.jpg").is_file(), "cover missing")
+meta = json.loads((ext / "draft_meta_info.json").read_text("utf-8"))
+built = json.loads((ext / "draft_info.json").read_text("utf-8"))
+check("draft_meta_info carries the draft id", meta.get("draft_id") == built.get("id"), str(meta.get("draft_id")))
+check("draft_meta_info points at its folder", meta.get("draft_fold_path") == str(ext.resolve()), str(meta.get("draft_fold_path")))
+check("draft_meta_info is not hidden", meta.get("draft_is_invisible") is False, str(meta.get("draft_is_invisible")))
+
+raw_index = (regroot / "root_meta_info.json").read_bytes()
+rc, payload = run(["draft", "register", str(ext), "--draft-root", str(regroot)])
+data = payload.get("data") or {}
+check("register dry-run is preview", payload.get("outcome") == "preview", str(payload.get("outcome")))
+check("register dry-run previews an insert", data.get("action") == "insert", str(data.get("action"))[:160])
+check("register dry-run uses the counter, not len()",
+      (data.get("draft_ids") or {}).get("after") == 1, str(data.get("draft_ids")))
+check("register dry-run warns outside the root", data.get("draft_inside_root") is False, str(data.get("draft_inside_root")))
+check("register dry-run touches nothing", (regroot / "root_meta_info.json").read_bytes() == raw_index, "index changed")
+
+rc, payload = run(["draft", "register", str(ext), "--draft-root", str(regroot), "--apply"])
+data = payload.get("data") or {}
+check("register apply", payload.get("outcome") == "executed" and data.get("applied") is True, str(payload.get("error"))[:200])
+check("register writes two backups", len(data.get("backups") or []) == 2, str(data.get("backups"))[:200])
+index = json.loads((regroot / "root_meta_info.json").read_text("utf-8"))
+check("register inserted one entry", len(index["all_draft_store"]) == 1, str(len(index["all_draft_store"])))
+check("register bumped draft_ids", index["draft_ids"] == 1, str(index["draft_ids"]))
+check("register keeps root_path", index.get("root_path") == str(regroot), str(index.get("root_path")))
+sys.path.insert(0, ROOT)
+from jy_cli.draft_index import ENTRY_TEMPLATE  # noqa: E402 - the shipped 38-key schema
+check("register entry uses 剪映's key schema",
+      set(index["all_draft_store"][0]) == set(ENTRY_TEMPLATE),
+      str(sorted(set(index["all_draft_store"][0]) ^ set(ENTRY_TEMPLATE))))
+
+rc, payload = run(["draft", "import", str(ext), "--draft-root", str(regroot), "--name", "导入草稿", "--apply"])
+data = payload.get("data") or {}
+imported = regroot / "导入草稿"
+check("import apply", payload.get("outcome") == "executed" and imported.is_dir(), str(payload.get("error"))[:200])
+check("import left the source in place", (ext / "draft_info.json").is_file(), "source vanished")
+index = json.loads((regroot / "root_meta_info.json").read_text("utf-8"))
+check("import updates instead of duplicating", len(index["all_draft_store"]) == 1, str(len(index["all_draft_store"])))
+check("import keeps the counter", index["draft_ids"] == 1, str(index["draft_ids"]))
+entry = index["all_draft_store"][0]
+check("import entry points at the copy", entry["draft_fold_path"] == str(imported.resolve()), str(entry["draft_fold_path"]))
+check("import entry keeps the draft id", entry["draft_id"] == built.get("id"), str(entry["draft_id"]))
+check("import renamed the list entry", entry["draft_name"] == "导入草稿", str(entry["draft_name"]))
+copied = json.loads((imported / "draft_info.json").read_text("utf-8"))
+check("import rewrites draft_info.path", copied.get("path") == str(imported.resolve()), str(copied.get("path")))
+copied_meta = json.loads((imported / "draft_meta_info.json").read_text("utf-8"))
+check("import rewrites meta fold path", copied_meta.get("draft_fold_path") == str(imported.resolve()), str(copied_meta.get("draft_fold_path")))
+check("import rewrites meta root path", copied_meta.get("draft_root_path") == str(regroot.resolve()), str(copied_meta.get("draft_root_path")))
+check("import keeps a cover", (imported / "draft_cover.jpg").is_file(), "cover missing after import")
+
+rc, payload = run(["draft", "import", str(ext), "--draft-root", str(regroot), "--name", "导入草稿", "--apply"])
+data = payload.get("data") or {}
+index = json.loads((regroot / "root_meta_info.json").read_text("utf-8"))
+check("import twice updates instead of copying again", data.get("mode") == "update", str(data.get("mode")))
+check("import twice keeps one entry", len(index["all_draft_store"]) == 1, str(len(index["all_draft_store"])))
+check("import twice keeps the counter", index["draft_ids"] == 1, str(index["draft_ids"]))
+check("import twice made no second folder",
+      sorted(path.name for path in regroot.iterdir() if path.is_dir() and path.name not in (".jy-backups",)) == ["导入草稿"],
+      str(sorted(path.name for path in regroot.iterdir() if path.is_dir())))
+
+rc, payload = run(["draft", "list", "--draft-root", str(regroot)])
+data = payload.get("data") or {}
+check("draft list shows the imported draft", [row.get("name") for row in data.get("drafts") or []] == ["导入草稿"],
+      str(data.get("drafts"))[:200])
+
+rc, payload = run(["draft", "build", "--spec", str(reg_spec), "-o", str(regroot / "自动草稿"), "--force"])
+data = payload.get("data") or {}
+check("build inside the root auto-registers", (data.get("registration") or {}).get("action") == "insert",
+      str(data.get("registration"))[:240])
+index = json.loads((regroot / "root_meta_info.json").read_text("utf-8"))
+check("auto-registered entry is listed", [entry["draft_name"] for entry in index["all_draft_store"]][:1] == ["自动草稿"],
+      str([entry["draft_name"] for entry in index["all_draft_store"]]))
+check("auto-register bumps draft_ids", index["draft_ids"] == 2, str(index["draft_ids"]))
+
+rc, payload = run(["draft", "build", "--spec", str(reg_spec), "-o", str(regroot / "未登记"), "--force", "--no-register"])
+index = json.loads((regroot / "root_meta_info.json").read_text("utf-8"))
+check("--no-register leaves the index alone", len(index["all_draft_store"]) == 2, str(len(index["all_draft_store"])))
+
+plain = WORK / "plain-folder"
+plain.mkdir(exist_ok=True)
+rc, payload = run(["draft", "import", str(plain), "--draft-root", str(regroot), "--apply"])
+check("import refuses a plain folder", (payload.get("error") or {}).get("code") == "NOT_FOUND", str(payload.get("error"))[:160])
+
+# ---------------------------------------------------------------- update guard
+sys.path.insert(0, ROOT)
+from jy_cli import update_guard as ug  # noqa: E402
+
+rc, payload = run(["update", "status"])
+data = payload.get("data") or {}
+check("update status ok", payload.get("ok") is True, str(payload.get("error"))[:200])
+check("update status names the app",
+      str((data.get("app") or {}).get("path", "")).endswith("VideoFusion-macOS.app"),
+      str(data.get("app"))[:200])
+check("update status reports the toggle", "auto_update" in (data.get("config") or {}),
+      str(data.get("config"))[:200])
+
+rc, payload = run(["update", "lock"])
+data = payload.get("data") or {}
+check("update lock is dry-run by default",
+      payload.get("outcome") == "preview" and data.get("applied") is False, str(payload.get("outcome")))
+check("update lock preview lists the pending state", "before" in data, str(data)[:200])
+
+rc, payload = run(["update", "unlock"])
+check("update unlock is dry-run by default", payload.get("outcome") == "preview",
+      str(payload.get("outcome")))
+
+# the flag machinery itself, on a throwaway tree (never the installed app)
+fixture = WORK / "update-fixture"
+shutil.rmtree(fixture, ignore_errors=True)
+(fixture / "nested").mkdir(parents=True)
+(fixture / "file.txt").write_text("x", "utf-8")
+(fixture / "nested" / "deep.txt").write_text("y", "utf-8")
+entries = ug._walk_entries([str(fixture)])
+check("flag walk covers every file and directory", len(entries) == 4,
+      str([entry["path"] for entry in entries]))
+changed, skipped = ug._chflags(entries, add=True)
+check("flag lock applies to every entry", changed == len(entries) and not skipped,
+      f"changed={changed} skipped={skipped[:2]}")
+import stat as _stat  # noqa: E402
+check("flag lock really sets UF_IMMUTABLE",
+      all(os.lstat(entry["path"]).st_flags & _stat.UF_IMMUTABLE for entry in entries), "flag missing")
+try:
+    (fixture / "file.txt").write_text("blocked", "utf-8")
+    check("locked file refuses writes", False, "write succeeded")
+except OSError:
+    check("locked file refuses writes", True)
+ug._chflags(entries, add=False)
+check("flag unlock clears UF_IMMUTABLE",
+      all(not (os.lstat(entry["path"]).st_flags & _stat.UF_IMMUTABLE) for entry in entries), "flag stuck")
+check("flag unlock keeps the files", (fixture / "nested" / "deep.txt").read_text("utf-8") == "y", "content lost")
+
 # C2b: agent-bridge's verified material keys pass; garbage in them still fails loudly
 rich = {
     "canvas": {"width": 640, "height": 360, "fps": 30},

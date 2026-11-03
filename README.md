@@ -90,9 +90,10 @@ Then just ask: *"Cut these three clips into a 15-second vertical video with a ti
 | Text & subtitles | `text` `subtitle` (burn in / export SRT) `asr` (local whisper.cpp) |
 | Audio | `audio` (volume, fades, BGM mix/replace, ducking, loudnorm, denoise) `extract-audio` |
 | Output | `export` `gif` `frame` `cover` `batch` |
-| 剪映 engine | `draft build` `render` `effects list/search/params` `material status/register` `fonts` |
+| 剪映 engine | `draft build` (auto-lists in 剪映) `draft register/import` `render` `effects list/search/params` `material status` `fonts` |
 | Sound effects | `sfx index/search/add/list/label/forget` — harvest the SFX you downloaded in 剪映, mix one into a video at `--at` (no network, no GUI) |
-| Projects | `draft list/rename/duplicate/delete/move/history` `asset import/list/prune` |
+| Projects | `draft list/rename/duplicate/delete/move/history` `draft register/import` `asset import/list/prune` |
+| App hygiene | `update status/lock/unlock` — stop 剪映's Sparkle auto-updater reversibly (no binary patch) |
 | Unattended | `--async` + `jobs list/status/wait/kill` `clean` |
 
 Full reference: [USAGE.md](USAGE.md) (Chinese) · `jy <command> --help` · [docs/CLI-HELP.txt](docs/CLI-HELP.txt) · long-form per-command notes in [docs/REFERENCE.zh-CN.md](docs/REFERENCE.zh-CN.md).

@@ -105,14 +105,15 @@ git clone https://github.com/risingjerry/jianying-agent-cli.git && cd jianying-a
 ### 3.6 剪映引擎（需要剪映在运行）
 | 命令 | 说明 |
 |---|---|
-| `jy draft build --spec spec.json -o DIR` | 从时间线规格生成草稿工程（含 `.jy-spec.json` 记录，供降级重渲染） |
+| `jy draft build --spec spec.json -o DIR` | 从时间线规格生成草稿工程（含 `.jy-spec.json` 记录，供降级重渲染）；`-o` 在剪映草稿根目录内时**自动登记进首页列表**（`--no-register` 关） |
 | `jy render DIR -o out.mp4 [--async] [--on-entitlement fail\|local] [--preflight] [--focus-guard watch\|restore\|off]` | 调剪映原生导出器渲染草稿；带焦点守卫、冷启动重试、崩溃重发现、跨进程渲染锁 |
 | `jy effects list\|search\|params` | 剪映素材目录（内置 269 条：id / 中文名 / 类型 / 参数；可用 ~/.config/jy/effects_catalog.json 覆盖） |
 | `jy effects cached [--kind K] [--search NAME] [--limit N] [--refresh]` | **本机剪映缓存里真正已下载、能渲染的素材**：kind / 中文名 / resource_id / `status:"cached"` / 可直接粘进 spec 的片段（见 §9.2） |
 | `jy effects search-remote KEYWORD [--kind K] [--limit N] [--offline]` | 搜剪映在线素材目录（+本机缓存列表回退）：`status cached\|remote`、`source live\|cache`、`vip`、`downloadable`（见 §9.3） |
 | `jy effects fetch NAME\|RESOURCE_ID [--kind K] [--offline]` | 把素材包下载进剪映缓存（md5 校验、原子解压、不覆盖已有包），之后 `cached` / 按名字解析都能用（见 §9.3） |
 | `jy material status` | 素材图能力自检：哪些类型已证明能渲染、哪些未验证、字体路径 |
-| `jy material register DIR [--apply]` | 把草稿注册进剪映草稿面板（默认 dry-run，自动备份索引） |
+| `jy draft register DIR [--apply]` | 把草稿登记进剪映首页草稿列表（默认 dry-run，双备份+原子替换；`material register` 是别名，见 §10.1） |
+| `jy draft import DIR [--apply]` | 草稿根目录之外的草稿 → 复制进草稿根目录、改写草稿内路径、再登记（默认 dry-run，目标永不覆盖） |
 
 #### spec.json 形状（文字样式必须放在 `style` 里）
 
@@ -309,7 +310,8 @@ jy draft build --spec spec.json -o d --fetch          # spec 里按名字引用�
 
 | 命令 | 说明 |
 |---|---|
-| `jy draft list \| rename \| duplicate \| delete \| move \| history` | 默认 dry-run，`--apply` 才动；改前备份到 `.jy-backups/`；删除进 `.jy-trash/`；草稿根之外的路径拒绝 |
+| `jy draft list \| register \| import \| rename \| duplicate \| delete \| move \| history` | 默认 dry-run，`--apply` 才动；改前备份到 `.jy-backups/`；删除进 `.jy-trash/`；草稿根之外的路径拒绝（`import` 是唯一的"搬进来"入口） |
+| `jy update status \| lock \| unlock` | 剪映自带 Sparkle 自动更新：查状态 / 关开关+隔离已下载更新包+给 App 加 `UF_IMMUTABLE` / 按 manifest 解锁（见 §10.2） |
 | `jy asset import \| list \| prune` | jy 自己的素材箱（sha256 去重），默认 dry-run |
 | `jy fonts [--check 名字]` | 枚举系统+剪映字体并校验，拼错即失败 |
 | `jy clean [--staging\|--assets\|--all] [--apply]` | `~/.cache/jy` 历史行为不变；`~/Movies` 下的 staging/assets **只有 `--apply` 才删** |
@@ -317,3 +319,48 @@ jy draft build --spec spec.json -o d --fetch          # spec 里按名字引用�
 **任意路径素材**：`draft build` 默认把 clip 源 hardlink/copy 到 `~/Movies/jy-staging/<hash>/` 并在草稿里引用 staging 路径，所以 `~/Downloads` 直接可用（TCC 保护路径会弹模态框把剪映卡死）。`--no-staging` 关闭，`--staging-dir` 改目录（相对路径按当前工作目录解析）。
 
 **多时间线迁移**：剪映打开过 jy 草稿后会把 `draft_info.json` 迁到 `Timelines/<uuid>/`；`jy` 自动解析（根 → `project.json` 的 `main_timeline_id` → 最新），并在 `data.draft.layout` 里报告 `single`/`multi-timeline`。
+
+### 10.1 让草稿出现在剪映首页列表
+
+剪映没有导入命令，首页列表就是草稿根目录下的 `root_meta_info.json`。jy 负责安全地维护它：
+
+```bash
+# A. 草稿已经在项目文件夹里（草稿根目录之外）：复制进来 + 改路径 + 登记，一条命令
+jy draft import ./03_content-lock/v1/jianying-draft --name "一个人加AI" --apply
+
+# B. 只有索引没登记（草稿已在本机草稿根目录里）
+jy draft register "<草稿根>/我的草稿" --apply
+
+# C. 以后直接生成到草稿根目录：build 会自动登记
+jy draft build --spec spec.json -o "<草稿根>/我的草稿"
+```
+
+- 三条都**默认只预演**，`--apply` 才写；写前双备份（`.jy-backups/root_meta_info.json.<ts>.json` +
+  `root_meta_info.json.bak-<ts>`），临时文件 + 原子替换，读完到写之间索引被剪映改过就重新合并、仍冲突则拒绝覆盖。
+- **顺序**：先退出剪映 → `--apply` → 再打开剪映。剪映运行中也会照写，但信封里会给出
+  `data.jianying_running=true` 和 warning：它退出时用内存里的草稿列表重写索引，可能把新条目冲掉。
+- `import` 不覆盖任何已有目录（重名自动 `-2`），`--move` 才是移动；源目录在复制模式下不动。
+- 剪映运行时会"收纳"草稿根目录里新出现的草稿目录（自己生成 draft_id、把 `draft_is_invisible` 写成 true、时长写 0），
+  所以 `import` 认领同一个草稿时按 `draft_info.json` 的 id 匹配，并重建 `draft_meta_info.json`；重复执行同一条
+  `import --apply` 是安全的（`mode:"update"`，不会复制第二份）。
+- 撤销：`cp <草稿根>/.jy-backups/root_meta_info.json.<ts>.json <草稿根>/root_meta_info.json`，
+  再删掉复制进去的目录；`jy draft history` 列出所有索引备份。
+
+### 10.2 防止剪映自动更新
+
+剪映自带 Sparkle 更新器：设置里的开关存在 `~/Movies/JianyingPro/User Data/Config/globalSetting`
+的 `enableAutoUpdate`，但**已经下载的更新包仍可能在退出时被装上**，开关本身也不总是粘住。
+
+```bash
+jy update status                 # 开关 / 锁状态 / 待安装文件 / 更新助手进程（只读）
+jy update lock --apply           # 关开关 + 把待安装的更新包移到备份目录 + 给 App 和更新缓存加 UF_IMMUTABLE
+jy update unlock --apply         # 按加锁时写的 manifest 还原原始 flags（不会重新打开自动更新）
+jy update unlock --apply --restore-config   # 连 globalSetting 一起还原
+```
+
+- 先正常退出剪映再 `lock --apply`；更新助手还在跑时默认 `BLOCKED`，`--force` 只终止这两个助手。
+- 更新包是**移动**到 `~/Library/Application Support/JianyingUpdateControl/<时间戳>/cancelled-update/`，不删除。
+- 锁只保护 `/Applications/VideoFusion-macOS.app` 与剪映的 Sparkle 缓存目录，不碰草稿、素材和其他 app；
+  不装守护进程、不改网络。想升级时先 `unlock`，手动装完再 `lock`。
+- 契约与静态证据（`draft_ids` 是水位计数、缺 `draft_meta_info.json` 的目录会被跳过等）见
+  [docs/REFERENCE.zh-CN.md](docs/REFERENCE.zh-CN.md) 的「草稿索引与首页列表」。

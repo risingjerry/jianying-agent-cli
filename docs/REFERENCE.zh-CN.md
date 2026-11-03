@@ -591,11 +591,88 @@ libass 自己会静默回退，警告是为了让"豆腐块"可诊断。
 - **素材特效/转场/花字/贴纸/模板**：需要 `resource_id` + 本机缓存包，jy 还没建模，`jy render` 目前只保证
   视频片段 + 文字的草稿能出片。ffmpeg 侧继续用 `jy transition`/`jy filter` 等做近似。
 - **美颜/智能抠像**：仍是 VESDK 能力，剪映引擎层未建模。
-- **剪映 GUI 草稿列表**：jy 不往 `root_meta_info.json` 注册草稿，所以 `draft build` 的产物是给
-  `jy render` 用的，不保证出现在剪映首页列表。
+- **剪映 GUI 草稿列表**：`jy draft build` 写进剪映草稿根目录时会自动登记进首页列表
+  （`root_meta_info.json`，双备份+原子替换）；草稿根目录之外的草稿用 `jy draft import` 复制进去再登记。
+  详见下面「草稿索引与首页列表」。
 - 会员额度是剪映自己的策略：需要额度时 jy 报 `BLOCKED`，不做任何绕过。**档位（VIP/SVIP）只能看剪映界面**：
   本机没有档位缓存，`vipRemindViewedInfo.ini` 只是 UI 状态；jy 的职责是把"哪一项被拒"点名清楚，以及
   （`--on-entitlement local` 时）给一个逐项标注的本地近似，而不是替你判断该买哪档。
+
+### 草稿索引与首页列表（`root_meta_info.json`）
+
+剪映的首页草稿列表来自草稿根目录下的明文索引，没有导入命令：
+
+```
+~/Movies/JianyingPro/User Data/Projects/com.lveditor.draft/
+├── root_meta_info.json          # {"all_draft_store":[38 键/条], "draft_ids": N, "root_path": "…"}
+├── 10月28日/ draft_info.json  draft_meta_info.json  draft_cover.jpg  Timelines/ …
+└── …
+```
+
+从本机 11.6.13358（build 11.7.0-beta6）静态分析（`libvideoeditor.dylib`）+ 实测得到的契约：
+
+| 项 | 事实 | 依据 |
+|---|---|---|
+| `draft_ids` | **水位计数，不是条目数**：本机 6 条时是 7，2026-10-24 的 5 条备份里是 6 → 恒为 `len+1`。读取端只把它存进 `DraftStoreManager+0x18`，整库没有自增指令，也从不和 `len(store)` 比较 | 静态 `readFromMetaInfo`/writer `sub_372f4a4`；快照对比 |
+| 目录校验 | `isDraftFoldValid = exists(folder) && exists(folder/draft_meta_info.json)`；**缺 `draft_meta_info.json` 的目录即使有条目也会被跳过** | 静态 `0x372885c` |
+| 丢弃条件 | 只有两条，都是"跳过该条+告警"：`draft_id` 为空或 `draft_root_path` 为空；目录校验失败 | 静态 `0x371b330`/`0x371b3cc` |
+| 空值自动补 | `draft_id` 空→生成 UUID、`draft_name` 空→用 UUID、`draft_cover` 空→`draft_cover.jpg`、`tm_draft_create/modified ≤ 0`→当前时间 | 静态 `DraftStore::initMetaInfo` |
+| 时间 | `tm_draft_create`/`tm_draft_modified`/`tm_duration` 都是 **µs** | 索引值 vs `draft_settings` |
+| `draft_timeline_materials_size` | 引用素材的总字节数（不是 `draft_info.json` 大小） | 本机 0 / 42 MB / 1.0 GB 对照 |
+| 写入时机 | 索引在启动时读取；剪映在保存/改名/关闭/退出等 28 个触发点用**内存里的列表**异步重写 → 外部改动可能被覆盖 | 静态 `writeToMetaInfoAsync` |
+| 运行中扫描新目录 | 实测：草稿根目录里多出一个新草稿目录后约 1 秒，运行中的剪映会自己"收纳"它——生成**新的 draft_id**、`draft_is_invisible:true`、`tm_duration:0`，并重写该目录的 `draft_meta_info.json`（`draft_info.json` 不动）。不是拒绝，是它自己的 adopt 流程 | 2026-11-03 实测（`analysis/jianying-draft-index/notes-live-index.md` §6） |
+
+jy 的做法：
+
+- `jy draft build -o <草稿根>/名字`：写完草稿后**自动登记**进首页列表（可用 `--no-register` 关）；同时补写
+  `draft_meta_info.json`（52 键，结构抄自剪映自己写的那份）和 `draft_cover.jpg`（首个视频片段抽帧）。
+- `jy draft register DIR --apply`：只登记（草稿已在草稿根目录内时用）。
+- `jy draft import DIR --apply`：草稿根目录之外的草稿 → 复制进草稿根目录、改写 `draft_info.json:path` /
+  `draft_meta_info.json` 里的路径和名字、刷新 `.jy-draft.json` 的 sha、再登记。目标目录永不覆盖（重名加 `-2`）。
+- 三个写操作都是**默认 dry-run**；写入时：先读索引并记下 sha256 → 复制两份备份
+  （`.jy-backups/root_meta_info.json.<ts>.json` 与 `root_meta_info.json.bak-<ts>`，逐份校验非空）→
+  写临时文件 + `os.replace` 原子替换；若读取后索引被别人（剪映）改过，**重新合并重试一次，仍不一致就拒绝覆盖**。
+  条目按"新草稿在前"插入，`draft_ids` 新条目时写成 `max(old, len+1)`，更新已有条目时不动它。
+- 剪映正在运行时登记会照写，但信封里 `data.jianying_running=true` + warning：它退出时会用内存里的列表重写索引，
+  所以**退出剪映 → 登记 → 打开剪映**才是可靠顺序。
+- 被剪映"收纳"过的目录要重新登记时，`jy` 会用 `draft_info.json` 里的 id 认领它（索引里的 draft_id 已被剪映换掉了），
+  并把 `draft_meta_info.json` 按 `draft_info.json` 重新生成一遍（id / 名字 / 时间 / 时长 / `draft_is_invisible:false`），
+  否则剪映会带着 `invisible:true` 和 0 时长继续用。
+
+验证状态：静态契约有证据（`analysis/jianying-draft-index/notes-rea.md`，REA 工作区）；沙盒草稿根目录里的
+"复制→改写路径→登记→`draft list` 读回"已端到端跑通（`tests/smoke.sh` C4 段）。**"剪映 GUI 里肉眼可见"
+这一步依赖重启剪映，属于交付时由用户确认的最后一环。**
+
+回滚：`cp <草稿根>/.jy-backups/root_meta_info.json.<ts>.json <草稿根>/root_meta_info.json`，再删掉复制进去的
+草稿目录即可；`jy draft history` 会列出所有索引备份。
+
+### 剪映自动更新（`jy update`）
+
+剪映（11.6.13358 / build 11.7.0-beta6）随包带 `Sparkle.framework`，自己下载并提示更新；设置里的
+开关写在 `~/Movies/JianyingPro/User Data/Config/globalSetting: enableAutoUpdate`。实测过两种
+"关了还更新"的路径：开关关掉后仍会提示"重启即更新"，且 **已经下载/解压好的更新包会在退出时被装上**
+（本机 2026-11-03 曾有一个 11.8.0-beta2 解压包 + 独立的 `Autoupdate`/`Updater` 进程在跑）。
+
+`jy update` 用**可逆、可观察**的方式挡住它，不改二进制、不装守护进程、不动网络：
+
+| 动作 | 具体行为 | 状态目录 |
+|---|---|---|
+| 关开关 | 只改 `globalSetting` 的 `enableAutoUpdate=false`，其余行原样；改前备份整份文件 | `<state>/<ts>/globalSetting` |
+| 隔离待安装更新 | 把剪映 Sparkle 缓存里的东西和 `User Data/Download/update_*` **移动**到备份目录（绝不删除） | `<state>/<ts>/cancelled-update/` |
+| 终止更新助手 | 只按**可执行文件完整路径**匹配并 SIGTERM 剪映自己的 `Autoupdate` / 缓存里的 `Updater`；不按名字模糊杀 | — |
+| 硬锁 | 给 `/Applications/VideoFusion-macOS.app` 和剪映的 Sparkle 缓存目录递归加 `UF_IMMUTABLE`（`chflags uchg`），跳过符号链接；加锁前把每个条目的原始 flags + device/inode 写成 manifest | `<state>/<ts>/original-flags.json` |
+
+`unlock --apply` 只按 manifest 还原（inode 变了的条目跳过，避免把换过的 App 当原 App），默认**不会**
+重新打开自动更新；要连配置一起还原用 `--restore-config`。`jy update status` 是只读的，报告：
+开关值、App 锁住的条目数/总数、缓存是否为空、待安装文件、更新助手进程、已有 manifest。
+
+实测（2026-11-03，本机）：锁后 `jy update status` 报 `immutable:true`、`11238/11238`、
+`auto_update:false`、`helpers:[]`、`pending:[]`；剪映正常退出重开后版本仍是 `11.7.0-beta6`，
+`codesign --verify --deep --strict` 通过（见 `~/Library/Application Support/JianyingUpdateControl/hard-lock-20261103/verification.json`）。
+
+边界（如实说明）：`UF_IMMUTABLE` 只能挡住非特权的写入/替换，管理员 `sudo chflags` 仍可解除；重装或从
+别处拷入的新 App 不受旧 manifest 保护；未来剪映若自己清 flags 也不可知。所以它是"防止悄悄更新"，
+不是安全边界。
 
 ## 无人值守硬化（焦点 / 韧性 / 异步任务 / 清理）
 

@@ -61,6 +61,8 @@ positional arguments:
     material       report which 剪映 material kinds jy can author and render
     sfx            local sound effects: index/search 剪映's downloaded SFX, mix
                    one into a video
+    update         block / inspect 剪映's own auto-updater (reversible, no
+                   binary patch)
 
 options:
   -h, --help       show this help message and exit
@@ -422,6 +424,8 @@ positional arguments:
   action
     build      write <dir>/draft_info.json from spec.json (strict fields,
                staged media)
+    register   add a draft folder to 剪映's home list (dry-run unless --apply)
+    import     copy an external draft folder into 剪映's draft root and list it
     list       list drafts from root_meta_info.json
     rename     rename a draft (dry-run unless --apply)
     duplicate  copy a draft (dry-run unless --apply)
@@ -436,6 +440,7 @@ options:
 
 usage: jy draft build [-h] [--verbose] -o PATH [--force] --spec FILE
                       [--no-staging] [--fetch] [--staging-dir DIR]
+                      [--no-register]
 
 读 spec（canvas + clips[] + texts[] + 可选
 effects/filters/stickers）并生成剪映草稿。未知字段会报错（不会静默忽略）；clip 源文件默认 stage 到
@@ -458,6 +463,50 @@ options:
                      yet (`jy effects fetch`)
   --staging-dir DIR  override the staging dir (default $JY_STAGING_DIR or
                      ~/Movies/jy-staging)
+  --no-register      do not add the draft to 剪映's home list (default: register
+                     when -o is inside the draft root)
+
+## jy draft register
+
+usage: jy draft register [-h] [--verbose] [--name NAME] [--draft-root DIR]
+                         [--root-meta FILE] [--apply]
+                         draft-dir
+
+把草稿登记进剪映首页草稿列表：改写 <草稿根>/root_meta_info.json 的 all_draft_store，并维护 draft_ids
+计数器（它不是条目数）。默认只预演；--apply 才写，写前双备份 + 原子替换，读取后索引被剪映改动时拒绝覆盖。
+
+positional arguments:
+  draft-dir         含 draft_info.json 的草稿目录
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --name NAME       列表里显示的名字（默认用草稿 name）
+  --draft-root DIR  剪映草稿根目录（默认取草稿目录的上一级，再退回本机安装路径）
+  --root-meta FILE  直接指定 root_meta_info.json
+  --apply           真正写入索引
+
+## jy draft import
+
+usage: jy draft import [-h] [--verbose] [--name NAME] [--draft-root DIR]
+                       [--root-meta FILE] [--move] [--apply]
+                       draft-dir
+
+把草稿根目录之外的剪映草稿（例如项目文件夹里 `jy draft build`
+出来的草稿）复制进剪映草稿根目录、改写草稿里记录的路径、再登记进首页列表。默认 dry-run；--apply 才复制并写入；目标目录永不覆盖（重名自动加
+-2）。
+
+positional arguments:
+  draft-dir         草稿根目录之外的草稿目录
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --name NAME       导入后的草稿名（默认沿用目录名）
+  --draft-root DIR  剪映草稿根目录
+  --root-meta FILE  直接指定 root_meta_info.json
+  --move            移动而不是复制（源目录会被移走）
+  --apply           真正复制/移动并登记
 
 ## jy draft list
 
@@ -1239,11 +1288,12 @@ options:
 
 ## jy material register
 
-usage: jy material register [-h] [--root-meta FILE] [--name NAME] [--apply]
+usage: jy material register [-h] [--root-meta FILE] [--draft-root DIR]
+                            [--name NAME] [--apply]
                             draft-dir
 
-把 jy 写的草稿登记进剪映草稿列表：往 root_meta_info.json 的 all_draft_store 追加/刷新一条，并把
-draft_ids 同步为条目数（它是整数计数，不是数组）。默认只预演；--apply 才写入，且写入前自动备份索引。
+（已迁移到 `jy draft register`，这里保留为别名。）把 jy 写的草稿登记进剪映草稿列表：往 root_meta_info.json 的
+all_draft_store 追加/刷新一条，并维护 draft_ids 计数器。默认只预演；--apply 才写入，且写入前自动备份索引。
 
 positional arguments:
   draft-dir         含 draft_info.json 的草稿目录
@@ -1251,6 +1301,7 @@ positional arguments:
 options:
   -h, --help        show this help message and exit
   --root-meta FILE  剪映草稿根的 root_meta_info.json（默认取草稿目录的上一级）
+  --draft-root DIR  剪映草稿根目录
   --name NAME       列表里显示的名字（默认用草稿 name）
   --apply           真正写入索引（会先备份成 root_meta_info.json.bak-<epoch>）
 
@@ -1363,3 +1414,50 @@ options:
   --verbose       stream ffmpeg logs to stderr
   --name NAME
   --tags a,b
+
+## jy update
+
+usage: jy update [-h] action ...
+
+剪映自带 Sparkle 自动更新：更新包可能在退出时被装上。这里提供可逆的做法——关掉 globalSetting 的
+enableAutoUpdate、把已下载的更新包移到备份目录、给 App 和更新缓存加 UF_IMMUTABLE。默认 dry-run，`--apply`
+才动；`unlock` 按 manifest 还原原始 flags。
+
+positional arguments:
+  action
+    status    auto-update switch, immutable lock state, staged installers,
+              update helpers
+    lock      disable auto-update, quarantine staged installers, freeze the
+              bundle (dry-run unless --apply)
+    unlock    restore the flags recorded at lock time (dry-run unless --apply)
+
+options:
+  -h, --help  show this help message and exit
+
+## jy update status
+
+usage: jy update status [-h] [--verbose]
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+
+## jy update lock
+
+usage: jy update lock [-h] [--verbose] [--apply] [--force]
+
+options:
+  -h, --help  show this help message and exit
+  --verbose   stream ffmpeg logs to stderr
+  --apply     真正执行（先备份 globalSetting）
+  --force     即使剪映的更新助手还在运行也继续（只终止这些助手，不动主程序）
+
+## jy update unlock
+
+usage: jy update unlock [-h] [--verbose] [--apply] [--restore-config]
+
+options:
+  -h, --help        show this help message and exit
+  --verbose         stream ffmpeg logs to stderr
+  --apply
+  --restore-config  同时把 globalSetting 还原成加锁前那份（会重新打开 enableAutoUpdate）

@@ -306,13 +306,14 @@ def register(r):
     register = mat_sub.add_parser(
         "register",
         help="add an authored draft to 剪映's draft list (root_meta_info.json)",
-        description="把 jy 写的草稿登记进剪映草稿列表：往 root_meta_info.json 的 "
-        "all_draft_store 追加/刷新一条，并把 draft_ids 同步为条目数（它是整数计数，不是数组）。"
+        description="（已迁移到 `jy draft register`，这里保留为别名。）把 jy 写的草稿登记进"
+        "剪映草稿列表：往 root_meta_info.json 的 all_draft_store 追加/刷新一条，并维护 draft_ids 计数器。"
         "默认只预演；--apply 才写入，且写入前自动备份索引。",
     )
     register.add_argument("draft", metavar="draft-dir", help="含 draft_info.json 的草稿目录")
     register.add_argument("--root-meta", metavar="FILE",
                           help="剪映草稿根的 root_meta_info.json（默认取草稿目录的上一级）")
+    register.add_argument("--draft-root", metavar="DIR", help="剪映草稿根目录")
     register.add_argument("--name", help="列表里显示的名字（默认用草稿 name）")
     register.add_argument("--apply", action="store_true",
                           help="真正写入索引（会先备份成 root_meta_info.json.bak-<epoch>）")
@@ -321,12 +322,13 @@ def register(r):
 
 
 def material_register(ctx, args):
-    """Register an authored draft folder in 剪映's draft list (root_meta_info.json)."""
-    from .. import draft as draft_mod
+    """Alias of ``jy draft register`` (kept so existing callers keep working)."""
+    from .. import draft_index
 
-    data = draft_mod.register_draft(
+    data = draft_index.register(
         args.draft,
         root_meta=args.root_meta,
+        draft_root=getattr(args, "draft_root", None),
         name=args.name,
         apply=bool(args.apply),
     )

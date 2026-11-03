@@ -28,6 +28,7 @@ from . import material as material_lib
 from .envelope import JyError
 
 SKELETON = Path(__file__).with_name("data") / "draft_skeleton.json"
+META_SKELETON = Path(__file__).with_name("data") / "draft_meta_skeleton.json"
 MARKER = ".jy-draft.json"
 MARKER_SCHEMA = "jy.draft.v1"
 
@@ -80,6 +81,79 @@ def _skeleton():
             f"jy 的草稿骨架文件损坏：{SKELETON}",
             details={"error": str(exc)},
         ) from exc
+
+
+def _meta_skeleton():
+    try:
+        return json.loads(META_SKELETON.read_text("utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:  # pragma: no cover - shipped data
+        raise JyError(
+            "INTERNAL",
+            f"jy 的草稿元信息骨架文件损坏：{META_SKELETON}",
+            details={"error": str(exc)},
+        ) from exc
+
+
+def materials_bytes(document, root):
+    """Bytes of the media a draft references (剪映's own ``draft_timeline_materials_size``).
+
+    Live entries mix 0 / 42 MB / 1.0 GB for drafts whose ``draft_info.json`` is 3–1 400 KB,
+    so the number tracks referenced media, not the draft file. Missing files count as 0.
+    """
+    total = 0
+    materials = document.get("materials")
+    if not isinstance(materials, dict):
+        return 0
+    seen = set()
+    for bucket in materials.values():
+        if not isinstance(bucket, list):
+            continue
+        for material in bucket:
+            if not isinstance(material, dict):
+                continue
+            path = material.get("path")
+            if not isinstance(path, str) or not path or path in seen:
+                continue
+            seen.add(path)
+            candidate = Path(path)
+            if not candidate.is_absolute():
+                candidate = Path(root) / candidate
+            try:
+                if candidate.is_file():
+                    total += candidate.stat().st_size
+            except OSError:
+                continue
+    return total
+
+
+def meta_info(document, root, *, created_us=None, modified_us=None):
+    """Build ``draft_meta_info.json``: 剪映's draft-store loader requires this file.
+
+    Its ``isDraftFoldValid`` is ``exists(folder) && exists(folder/draft_meta_info.json)``
+    (verified statically in 11.6.13358); a folder without it is skipped even when an
+    index entry points at it. The 52-key skeleton is a copy of what 剪映's own render
+    job wrote for a jy draft, so the shape is the app's, not a guess.
+    """
+    folder = Path(root).resolve()
+    meta = _meta_skeleton()
+    now_us = int(time.time() * 1_000_000)
+    if created_us is None and isinstance(document.get("create_time"), (int, float)):
+        created_us = int(document["create_time"]) * 1_000_000
+    if modified_us is None and isinstance(document.get("update_time"), (int, float)):
+        modified_us = int(document["update_time"]) * 1_000_000
+    meta.update({
+        "draft_id": str(document.get("id") or ""),
+        "draft_name": str(document.get("name") or folder.name),
+        "draft_fold_path": str(folder),
+        "draft_root_path": str(folder.parent),
+        "draft_cover": "draft_cover.jpg",
+        "draft_type": str(document.get("draft_type") or ""),
+        "draft_timeline_materials_size_": materials_bytes(document, folder),
+        "tm_draft_create": int(created_us if created_us is not None else now_us),
+        "tm_draft_modified": int(modified_us if modified_us is not None else now_us),
+        "tm_duration": int(document.get("duration") or 0),
+    })
+    return meta
 
 
 def load_spec(spec_path):
@@ -867,7 +941,7 @@ def _clear_generated(root):
     them, otherwise the render would silently replay the *previous* timeline.
     Only ever called for a marker-verified jy draft with explicit --force.
     """
-    keep = {"draft_info.json", MARKER}
+    keep = {"draft_info.json", "draft_meta_info.json", MARKER}
     for entry in root.iterdir():
         if entry.name in keep:
             continue
@@ -1253,6 +1327,12 @@ def build(tool, spec_path, out_dir, *, force=False, warnings=None):
 
     draft_file = root / "draft_info.json"
     draft_file.write_text(json.dumps(document, ensure_ascii=False), encoding="utf-8")
+    meta_file = root / "draft_meta_info.json"
+    meta_file.write_text(
+        json.dumps(meta_info(document, root, created_us=now * 1_000_000,
+                             modified_us=now * 1_000_000), ensure_ascii=False),
+        encoding="utf-8",
+    )
     digest = hashlib.sha256(draft_file.read_bytes()).hexdigest()
     marker_file = root / MARKER
     marker_file.write_text(
@@ -1289,15 +1369,13 @@ def build(tool, spec_path, out_dir, *, force=False, warnings=None):
         "clips": summary_clips,
         "texts": summary_texts,
         "effects": summary_effects,
-        "files": [str(draft_file), str(marker_file)],
+        "files": [str(draft_file), str(meta_file), str(marker_file)],
     }
 
 
 # --------------------------------------------------------------------------- #
-# draft-list registration (root_meta_info.json)
+# draft_info.json resolution (single-file and multi-timeline layouts)
 # --------------------------------------------------------------------------- #
-
-ROOT_META = "root_meta_info.json"
 
 
 def resolve_draft_info(draft_dir):
@@ -1343,162 +1421,3 @@ def resolve_draft_info(draft_dir):
             "layout": "multi-timeline" if candidate else "missing",
             "timeline_id": timeline_id}
 
-
-def find_root_meta(draft_dir):
-    """Locate 剪映's draft index for a draft folder.
-
-    The real layout is ``<draft_root>/root_meta_info.json`` next to one directory
-    per draft, so the index is the parent's ``root_meta_info.json``.
-    """
-    target = Path(draft_dir).expanduser().resolve()
-    for candidate in (target.parent / ROOT_META, target / ROOT_META):
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-def _store_entry_template(store):
-    """A blank entry with 剪映's exact key set, copied from the user's own store."""
-    if not store:
-        raise JyError(
-            "UNAVAILABLE",
-            "root_meta_info.json 的 all_draft_store 是空的：没有可参照的条目字段集，"
-            "jy 不会凭猜测写索引",
-        )
-    template = json.loads(json.dumps(store[0]))
-    for key, value in list(template.items()):
-        if isinstance(value, bool):
-            template[key] = False
-        elif isinstance(value, (int, float)):
-            template[key] = 0
-        elif isinstance(value, str):
-            template[key] = ""
-        elif isinstance(value, list):
-            template[key] = []
-        elif isinstance(value, dict):
-            template[key] = {}
-        else:
-            template[key] = None
-    return template
-
-
-def build_index_entry(draft_dir, store, *, name=None):
-    """Build the ``all_draft_store`` entry for a jy-authored draft."""
-    root = Path(draft_dir).expanduser().resolve()
-    info_file = root / "draft_info.json"
-    if not info_file.is_file():
-        raise JyError("NOT_FOUND", f"不是剪映草稿目录（缺 draft_info.json）：{root}")
-    try:
-        document = json.loads(info_file.read_text("utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise JyError(
-            "UNSUPPORTED",
-            f"{info_file} 不是明文 draft_info.json；jy 只登记自己写的明文草稿",
-            details={"error": str(exc)},
-        ) from exc
-    entry = _store_entry_template(store)
-    draft_root = str(root.parent)
-    cover = root / "draft_cover.jpg"
-    entry.update({
-        "draft_fold_path": str(root),
-        "draft_json_file": str(info_file),
-        "draft_name": name or document.get("name") or root.name,
-        "draft_id": str(document.get("id") or ""),
-        "draft_root_path": draft_root,
-        "draft_cover": str(cover) if cover.is_file() else "",
-        "draft_timeline_materials_size": int(info_file.stat().st_size),
-        "draft_new_version": str(document.get("new_version") or ""),
-    })
-    return entry
-
-
-def register_draft(draft_dir, *, root_meta=None, name=None, apply=False):
-    """Add (or refresh) a draft in 剪映's draft list.
-
-    ``apply=False`` (the default) only reports what would be written.  Writing
-    always copies the existing index to ``root_meta_info.json.bak-<epoch>`` first,
-    and refuses outright if that backup cannot be created.
-    """
-    root = Path(draft_dir).expanduser().resolve()
-    meta_path = Path(root_meta).expanduser() if root_meta else find_root_meta(root)
-    if meta_path is None:
-        raise JyError(
-            "NOT_FOUND",
-            f"找不到 root_meta_info.json（在 {root.parent} 下）；用 --root-meta 指定剪映草稿根目录的索引",
-        )
-    if not meta_path.is_file():
-        raise JyError("NOT_FOUND", f"索引文件不存在：{meta_path}")
-    try:
-        index = json.loads(meta_path.read_text("utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise JyError("UNSUPPORTED", f"索引不是合法 JSON：{meta_path}",
-                      details={"error": str(exc)}) from exc
-    if not isinstance(index, dict) or "all_draft_store" not in index:
-        raise JyError("UNSUPPORTED",
-                      f"索引缺少 all_draft_store，不是剪映草稿索引：{meta_path}")
-
-    store = index.get("all_draft_store") or []
-    if not isinstance(store, list):
-        raise JyError("UNSUPPORTED", "all_draft_store 不是数组，拒绝改写")
-    entry = build_index_entry(root, store, name=name)
-
-    existing = None
-    for position, current in enumerate(store):
-        if str(current.get("draft_fold_path") or "") == entry["draft_fold_path"]:
-            existing = position
-            break
-    updated = list(store)
-    if existing is None:
-        updated.append(entry)
-        action = "insert"
-    else:
-        updated[existing] = entry
-        action = "update"
-
-    new_index = dict(index)
-    new_index["all_draft_store"] = updated
-    # 剪映 stores this as a COUNT, not a list.
-    new_index["draft_ids"] = len(updated)
-
-    result = {
-        "root_meta": str(meta_path),
-        "draft": str(root),
-        "action": action,
-        "entry": entry,
-        "before": {"drafts": len(store), "draft_ids": index.get("draft_ids")},
-        "after": {"drafts": len(updated), "draft_ids": new_index["draft_ids"]},
-        "applied": False,
-        "backup": None,
-    }
-    if not apply:
-        result["note"] = "预演：未写入。加 --apply 才会写索引（写入前自动备份）"
-        return result
-
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    # Two names on purpose: `.jy-backups/` is what `jy draft history` lists and what
-    # the other draft verbs use, while `root_meta_info.json.bak-<stamp>` is the file
-    # the existing restore procedure looks for. Both are verified before writing.
-    backups = []
-    backup_dir = meta_path.parent / ".jy-backups"
-    try:
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        canonical = backup_dir / f"{meta_path.name}.{stamp}.json"
-        shutil.copy2(meta_path, canonical)
-        backups.append(canonical)
-        legacy = meta_path.with_name(f"{meta_path.name}.bak-{stamp}")
-        shutil.copy2(meta_path, legacy)
-        backups.append(legacy)
-    except OSError as exc:
-        raise JyError("BLOCKED", f"备份索引失败，拒绝写入：{backups[-1] if backups else backup_dir}",
-                      details={"error": str(exc)}) from exc
-    for backup in backups:
-        if not backup.is_file() or backup.stat().st_size == 0:
-            raise JyError("BLOCKED", f"备份校验失败，拒绝写入：{backup}")
-    backup = backups[0]
-    tmp = meta_path.with_name(f"{meta_path.name}.tmp-{stamp}")
-    tmp.write_text(json.dumps(new_index, ensure_ascii=False), encoding="utf-8")
-    os.replace(tmp, meta_path)
-    result["applied"] = True
-    result["backup"] = str(backup)
-    result["backups"] = [str(item) for item in backups]
-    return result
