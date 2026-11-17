@@ -13,8 +13,9 @@ module offers two mechanisms with very different side effects:
       so 剪映 is free to close its own export window.
 
   ``watch`` (default)
-      Re-activate the previous app every ``interval`` seconds *during* the render,
-      then restore. Keeps the user's app in front instead of leaking 剪映's window
+      Every ``interval`` seconds *during* the render, if 剪映 has taken the front,
+      put the user's app back; if the user switched to some other app themselves,
+      follow them (that app becomes the one to restore) instead of yanking them back. Keeps the user's app in front instead of leaking 剪映's window
       for the whole export. A controlled matrix on a warm 剪映 (same draft, guard
       off → ok 3s, guard on → ok 3s, guard off → ok 2s) cleared an earlier suspicion
       that this polling wedges the export window: the real first-render failure was
@@ -47,7 +48,7 @@ RESIDUAL_NOTE = (
     "拉回来一次。鼠标指针从不移动，也不点任何界面。"
 )
 WATCH_WARNING = (
-    "watch 模式下 jy 会在导出期间每 interval 把用户原来的前台应用拉回来；"
+    "watch 模式下 jy 只在剪映抢到前台时把用户的应用拉回来；用户自己切到别的应用时跟着用户走，不会拽回去；"
     "A/B（同一草稿、热启动剪映）证明这不会影响导出：guard on/off 都在 2-3s 成功。"
     "真正的首次失败是剪映冷启动问题（jy 会在冷启动时自动重试一次，见 render）。"
 )
@@ -136,6 +137,7 @@ class FocusGuard:
             self.mode = "off"
         self.enabled = self.mode != "off"
         self.target = None
+        self.avoid = None
         self.reason = None
         self.checks = 0
         self.reactivations = 0
@@ -157,6 +159,7 @@ class FocusGuard:
             )
             return self
         self.target = target
+        self.avoid = avoid_bundle
         if self.mode == "watch":
             self._thread = threading.Thread(
                 target=self._loop, name="jy-focus-guard", daemon=True
@@ -172,6 +175,10 @@ class FocusGuard:
                 continue
             if current.get("asn") == self.target.get("asn"):
                 continue
+            if self.avoid and current.get("bundle_id") != self.avoid:
+                # The user switched apps on purpose: follow them, never pull them back.
+                self.target = current
+                continue
             if activate(self.target):
                 self.reactivations += 1
             elif not running(self.target.get("bundle_id")):
@@ -185,7 +192,8 @@ class FocusGuard:
         restored = None
         if self.target and self.reason is None:
             current = frontmost()
-            if current and current.get("asn") != self.target.get("asn"):
+            if (current and current.get("asn") != self.target.get("asn")
+                    and (not self.avoid or current.get("bundle_id") == self.avoid)):
                 activate(self.target)
                 current = frontmost()
             restored = bool(current and current.get("asn") == self.target.get("asn"))
