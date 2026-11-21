@@ -176,7 +176,7 @@ jy render DIR -o 成片.mp4 --remote gamingpc --preflight    # 只读：PC 剪�
 
 #### 素材本来就在 PC 上（`--media-host` + `--remote-output`）
 
-素材已经在 Windows 电脑上时（例如 content-production 的 PC 项目 `C:\Users\JERRYS\studio\projects\<id>\`），不用拷回 Mac：
+素材已经在 Windows 电脑上时（例如 `%USERPROFILE%\studio\projects\<id>\`），不用拷回 Mac：
 
 ```bash
 # spec 里 clip.path 直接写 PC 的 Windows 绝对路径（C:/... 或 C:\...）
