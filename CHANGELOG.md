@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Media that already lives on the Windows PC.** `jy draft build --media-host HOST` accepts clip paths that
+  are Windows paths (`C:/...`), ffprobes them on HOST over ssh and writes them into the draft unchanged (no
+  staging, no copy); `jy render --remote HOST --remote-output REL` writes the mp4 to REL under the PC user's
+  home (e.g. inside a PC-side project). Used by content-production `tools/pc-studio`.
 - **Drafts now show up in 剪映's home list.** `jy draft build -o <draft-root>/name` registers the draft in
   `root_meta_info.json` automatically (`--no-register` opts out), and two new verbs cover the other cases:
   `jy draft register DIR` (folders already inside the root) and `jy draft import DIR` (copy a project-folder

@@ -48,6 +48,8 @@ jy render ./draft -o final.mp4 --async          # returns a job id
 jy jobs wait <job-id>
 # or hand it to 剪映 on a Windows PC (ssh alias); mp4 stays there unless --fetch
 # jy render ./draft -o final.mp4 --remote gamingpc --fetch
+# media already on that PC: clip paths C:/..., build with --media-host gamingpc,
+# then --remote-output studio/projects/<id>/... puts the mp4 inside the PC project (USAGE「素材本来就在 PC 上」)
 
 # 6) Verify every material actually shows up (mandatory — see "Delivery discipline")
 jy frame final.mp4 --at 10% -o f1.png ; jy frame final.mp4 --at 50% -o f2.png ; jy frame final.mp4 --at 90% -o f3.png

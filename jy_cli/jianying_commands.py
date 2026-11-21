@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import signal
 import subprocess
 import tempfile
@@ -48,7 +49,8 @@ def draft_build(ctx, args):
     """Author a 剪映 draft folder from a JSON timeline spec."""
     tool = ctx.require()
     data = drafts.build(
-        tool, args.spec, args.output, force=bool(args.force), warnings=ctx.warnings
+        tool, args.spec, args.output, force=bool(args.force), warnings=ctx.warnings,
+        media_host=getattr(args, "media_host", None),
     )
     data["note"] = ENGINE_NOTE
     root = Path(data["draft_info"]).parent
@@ -84,7 +86,7 @@ def _record_spec(root, spec_path):
     except (OSError, json.JSONDecodeError):
         return None
     for clip in spec.get("clips") or []:
-        if isinstance(clip, dict) and clip.get("path"):
+        if isinstance(clip, dict) and clip.get("path") and not re.match(r"^[A-Za-z]:[\\/]", str(clip["path"])):
             candidate = Path(str(clip["path"])).expanduser()
             if not candidate.is_absolute():
                 clip["path"] = str((source.parent / candidate).resolve())
@@ -890,6 +892,8 @@ def render(ctx, args):
         return _render_remote(ctx, args, resolved)
     if getattr(args, "fetch", False):
         raise JyError("VALIDATION", "--fetch 只和 --remote 一起用（把远程成片拷回 -o）")
+    if getattr(args, "remote_output", None):
+        raise JyError("VALIDATION", "--remote-output 只和 --remote 一起用")
     target = _checked_output(args.output, args.force)
     timeout_ms = int(getattr(args, "timeout_ms", jianying.DEFAULT_TIMEOUT_MS))
     if timeout_ms < 5_000:

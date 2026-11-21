@@ -163,6 +163,26 @@ def windows_name(name, fallback="draft"):
     return cleaned[:120] or fallback
 
 
+def remote_output_rel(value):
+    """``--remote-output``: where the mp4 lands on the PC, relative to the PC user's home.
+
+    Used to write straight into a PC-side project (``studio/projects/<id>/03_content-lock/...``).
+    Forward slashes, no ``..``, every part a valid Windows name, ends in ``.mp4``. None = default.
+    """
+    if not value:
+        return None
+    rel = str(value).replace("\\", "/").strip("/")
+    parts = rel.split("/")
+    if (re.match(r"^[A-Za-z]:", rel) or any(p in ("", ".", "..") for p in parts)
+            or any(windows_name(p) != p for p in parts) or not rel.lower().endswith(".mp4")):
+        raise JyError(
+            "VALIDATION",
+            f"--remote-output 要写相对 PC 用户目录的路径，如 studio/projects/<id>/03_content-lock/v1/video/content-only.mp4："
+            f"{value!r}",
+        )
+    return rel
+
+
 def plan(paths, draft_root, probe, *, cache_root, app_resources=MAC_APP_RESOURCES,
          exists=os.path.exists, isdir=os.path.isdir):
     """Decide the Windows path for every Mac path.
@@ -580,7 +600,7 @@ def render_remote(ctx, args, *, tool, resolved, summary, sha256, target, bridge_
     out_name = windows_name(Path(args.output).name, "out.mp4")
     if not out_name.lower().endswith(".mp4"):
         out_name += ".mp4"
-    output_rel = f"{OUTPUT_ROOT}/{draft_name}/{out_name}"
+    output_rel = remote_output_rel(getattr(args, "remote_output", None)) or f"{OUTPUT_ROOT}/{draft_name}/{out_name}"
 
     remote = Remote(host)
     stages = []

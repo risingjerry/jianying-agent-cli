@@ -326,7 +326,59 @@ def probe_media(tool, path):
     return _normalize(path, raw)
 
 
-def _normalize(path, raw):
+WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def is_windows_path(value):
+    """True for an absolute Windows path (``C:/...`` or ``C:\\...``): media that lives on a remote PC."""
+    return isinstance(value, str) and bool(WINDOWS_PATH.match(value))
+
+
+def probe_media_remote(host, path, timeout=60.0):
+    """ffprobe a file that lives on a Windows PC (``ssh HOST``), same dict as :func:`probe_media`.
+
+    The PowerShell command travels as ``-EncodedCommand`` (UTF-16LE base64), so CJK
+    paths survive cmd.exe; the path itself is passed single-quoted and checked first.
+    """
+    import base64
+
+    if not re.match(r"^[A-Za-z0-9._@-]+$", host or ""):
+        raise JyError("VALIDATION", f"--media-host 主机名不合法：{host!r}（填 ~/.ssh/config 里的别名，如 gamingpc）")
+    pc_path = str(path).replace("\\", "/")
+    if not is_windows_path(pc_path) or "'" in pc_path or "\n" in pc_path:
+        raise JyError("VALIDATION", f"远程素材路径必须是 Windows 绝对路径（C:/...），且不含单引号：{path!r}")
+    script = (
+        "[Console]::OutputEncoding=[Text.Encoding]::UTF8; $ErrorActionPreference='Stop'; "
+        f"$p='{pc_path}'; if (-not (Test-Path -LiteralPath $p -PathType Leaf)) {{ Write-Output 'JYPROBE_MISSING'; exit 3 }}; "
+        "& ffprobe -v error -print_format json -show_format -show_streams $p"
+    )
+    encoded = base64.b64encode(script.encode("utf-16-le")).decode("ascii")
+    argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "LogLevel=ERROR", host,
+            f"powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"]
+    try:
+        done = subprocess.run(argv, stdin=subprocess.DEVNULL, capture_output=True, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise JyError("UNAVAILABLE", f"远程 ffprobe 超时（{host}）：{pc_path}", retriable=True) from exc
+    out = (done.stdout or b"").decode("utf-8", "replace").lstrip("\ufeff")
+    err = (done.stderr or b"").decode("utf-8", "replace")
+    if done.returncode == 255:
+        raise JyError("UNAVAILABLE", f"连不上 {host}（ssh 失败：{err.strip()[-200:]}）", retriable=True,
+                      details={"host": host})
+    if "JYPROBE_MISSING" in out:
+        raise JyError("NOT_FOUND", f"{host} 上没有这个素材：{pc_path}", details={"host": host})
+    if done.returncode != 0:
+        raise JyError("INTERNAL", f"{host} 上的 ffprobe 读不了 {pc_path}（PC 装了 ffmpeg 吗？）",
+                      details={"host": host, "returncode": done.returncode, "tail": tail_lines(err)})
+    try:
+        raw = json.loads(out[out.index("{"):] if "{" in out else "{}")
+    except json.JSONDecodeError as exc:
+        raise JyError("INTERNAL", f"{host} 上的 ffprobe 输出不是 JSON：{pc_path}") from exc
+    probe = _normalize(pc_path, raw, local=False)
+    probe["host"] = host
+    return probe
+
+
+def _normalize(path, raw, local=True):
     streams = raw.get("streams") or []
     video = next((s for s in streams if s.get("codec_type") == "video"), None)
     audios = [s for s in streams if s.get("codec_type") == "audio"]
@@ -346,11 +398,11 @@ def _normalize(path, raw):
         video.get("duration") if video else None
     )
     size = int(fmt.get("size")) if str(fmt.get("size", "")).isdigit() else 0
-    if not size and os.path.isfile(path):
+    if not size and local and os.path.isfile(path):
         size = os.path.getsize(path)
 
     return {
-        "path": os.path.abspath(path),
+        "path": os.path.abspath(path) if local else path,
         "size_bytes": size,
         "format_name": fmt.get("format_name"),
         "duration_s": round(duration, 3) if duration else 0.0,

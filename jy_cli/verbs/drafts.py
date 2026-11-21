@@ -610,6 +610,11 @@ def register(r):
         help="download materials named in the spec that are not cached yet (`jy effects fetch`)",
     )
     build.add_argument(
+        "--media-host", metavar="SSH_HOST", default=None,
+        help="clips whose path is a Windows path (C:/...) live on this PC (e.g. gamingpc): "
+        "ffprobe them there over ssh and reference them as-is; render with jy render --remote SSH_HOST",
+    )
+    build.add_argument(
         "--staging-dir", metavar="DIR", help="override the staging dir (default $JY_STAGING_DIR or ~/Movies/jy-staging)"
     )
     build.add_argument(

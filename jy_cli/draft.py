@@ -520,7 +520,7 @@ def _parse_mask(raw, where):
     }
 
 
-def _parse_clips(spec, spec_dir, tool, warnings):
+def _parse_clips(spec, spec_dir, tool, warnings, media_host=None):
     raw = spec.get("clips") or []
     if not isinstance(raw, list):
         raise JyError("VALIDATION", "spec.clips 必须是数组")
@@ -532,8 +532,19 @@ def _parse_clips(spec, spec_dir, tool, warnings):
         label = f"clips[{index}]"
         if not isinstance(item, dict):
             raise JyError("VALIDATION", f"{label} 必须是对象 {{path,start,duration}}")
-        path = _resolve_media(spec_dir, item.get("path"), label)
-        probe = ffmpeg.probe_media(tool, str(path))
+        if ffmpeg.is_windows_path(str(item.get("path") or "")):
+            # media that lives on the Windows PC: probed there, referenced as-is (C:/...)
+            if not media_host:
+                raise JyError(
+                    "VALIDATION",
+                    f"{label}.path 是 Windows 路径（{item.get('path')}）：素材在远程 PC 上时要加 "
+                    "--media-host HOST（如 gamingpc），再用 jy render --remote HOST 出片",
+                )
+            probe = ffmpeg.probe_media_remote(media_host, str(item["path"]))
+            path = probe["path"]
+        else:
+            path = _resolve_media(spec_dir, item.get("path"), label)
+            probe = ffmpeg.probe_media(tool, str(path))
         if not probe.get("codec") or not probe.get("width") or not probe.get("height"):
             raise JyError("UNSUPPORTED", f"{label} 没有视频流：{path}")
         source_duration = probe["duration_s"] or 0.0
@@ -977,14 +988,14 @@ def _check_output_dir(out_dir, force):
     return target.resolve()
 
 
-def build(tool, spec_path, out_dir, *, force=False, warnings=None):
+def build(tool, spec_path, out_dir, *, force=False, warnings=None, media_host=None):
     """Write ``<out_dir>/draft_info.json``; return the envelope data dict."""
     warnings = warnings if warnings is not None else []
     spec_file = Path(spec_path).expanduser().resolve()
     spec = load_spec(spec_file)
     spec_dir = spec_file.parent
 
-    clips = _parse_clips(spec, spec_dir, tool, warnings)
+    clips = _parse_clips(spec, spec_dir, tool, warnings, media_host=media_host)
     texts = _parse_texts(spec, warnings)
     spec_effects = _parse_effects(spec, warnings)
     spec_stickers = _parse_stickers(spec, warnings)

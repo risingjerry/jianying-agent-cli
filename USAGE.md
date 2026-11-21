@@ -174,6 +174,23 @@ jy render DIR -o 成片.mp4 --remote gamingpc --preflight    # 只读：PC 剪�
 - **限制**：剪映在 GUI 里保存过的草稿 `draft_info.json` 是加密的，路径改不了 → `UNSUPPORTED`，请用 `jy draft build` 生成的明文草稿。
   token 和账号上下文只在 PC 脚本内用，不回传、不落盘。
 
+#### 素材本来就在 PC 上（`--media-host` + `--remote-output`）
+
+素材已经在 Windows 电脑上时（例如 content-production 的 PC 项目 `C:\Users\JERRYS\studio\projects\<id>\`），不用拷回 Mac：
+
+```bash
+# spec 里 clip.path 直接写 PC 的 Windows 绝对路径（C:/... 或 C:\...）
+jy draft build --spec spec.json -o ./draft --media-host gamingpc --no-register   # ffprobe 经 ssh 在 PC 上跑
+jy render ./draft -o x.mp4 --remote gamingpc \
+  --remote-output studio/projects/<id>/03_content-lock/v1/video/content-only.mp4  # 相对 PC 用户目录
+```
+
+- `--media-host`：Windows 路径的 clip 在那台机器上 ffprobe（PowerShell `-EncodedCommand`，中文路径不乱码；PC 要有 `ffprobe`），
+  草稿里原样写 Windows 路径；不 stage、不拷贝。没给 `--media-host` 却写了 Windows 路径 → `VALIDATION`。目前只支持 `clips[]`。
+- `jy render --remote` 只改写 `/` 开头的 Mac 路径，Windows 路径原样留着，所以 PC 素材不进 job 包。
+- `--remote-output REL`：成片放到 PC 用户目录下的 REL（只许相对路径、不许 `..`、要 `.mp4`），不再放 `studio\outputs\<草稿名>\`。
+
+
 ### 3.8 音效库（`jy sfx`，纯本地）
 
 在剪映音效面板**点一次下载**，文件就是一个普通 MP3 落在

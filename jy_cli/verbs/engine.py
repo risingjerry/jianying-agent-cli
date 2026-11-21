@@ -130,6 +130,13 @@ def register(r):
         "<draft>\\<-o name>. --relaunch-app lets it start 剪映 on the PC desktop",
     )
     render.add_argument(
+        "--remote-output",
+        metavar="REL",
+        default=None,
+        help="with --remote: put the mp4 here instead, relative to the PC user's home "
+        "(e.g. studio/projects/<id>/03_content-lock/v1/video/content-only.mp4)",
+    )
+    render.add_argument(
         "--fetch",
         action="store_true",
         help="with --remote: also copy the mp4 back to -o and ffprobe it",

@@ -20,6 +20,7 @@ from __future__ import annotations
 import difflib
 import hashlib
 import json
+import re
 import os
 import shutil
 from pathlib import Path
@@ -465,6 +466,10 @@ def stage_clips(spec, spec_dir, *, root=None, warnings=None):
         raw = clip.get("path")
         if not raw:
             continue
+        if re.match(r"^[A-Za-z]:[\\/]", str(raw)):
+            report.append({"original": raw, "staged": raw, "copied": False, "bytes": None,
+                           "linked": False, "reason": "remote PC media (--media-host): not staged"})
+            continue
         source = Path(raw).expanduser()
         if not source.is_absolute():
             source = (Path(spec_dir) / source).resolve()
@@ -512,9 +517,12 @@ def stage_clips(spec, spec_dir, *, root=None, warnings=None):
             }
         )
         clip["path"] = str(target)
-    if report:
+    local = [r for r in report if not str(r.get("reason", "")).startswith("remote PC media")]
+    if len(local) < len(report):
+        warnings.append(f"{len(report) - len(local)} 个素材在远程 PC 上（--media-host），不 stage，草稿里原样引用 Windows 路径。")
+    if local:
         warnings.append(
-            f"已把 {len(report)} 个素材 stage 到 {root}（硬链接优先，跨卷才复制）："
+            f"已把 {len(local)} 个素材 stage 到 {root}（硬链接优先，跨卷才复制）："
             "这样草稿不会引用 ~/Downloads 等受 TCC 保护的目录（那会弹模态权限框并卡死剪映）。"
         )
     return staged_spec, report

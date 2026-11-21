@@ -264,5 +264,68 @@ class DraftFilesTest(unittest.TestCase):
             self.assertEqual(names, ["draft_info.json"])
 
 
+class PcMediaTest(unittest.TestCase):
+    """Media already on the PC: Windows paths pass through untouched; --remote-output."""
+
+    def test_windows_paths_are_not_collected_or_rewritten(self):
+        doc = {"materials": {"videos": [{"path": "C:/Users/J/studio/projects/p/00_source/media/source.mov"},
+                                        {"path": MEDIA}]}}
+        self.assertEqual(remote.collect_paths(doc), {MEDIA})
+        fixed = remote.rewrite(doc, {MEDIA: "C:/job/media/001.mp4"})
+        self.assertEqual(fixed["materials"]["videos"][0]["path"],
+                         "C:/Users/J/studio/projects/p/00_source/media/source.mov")
+
+    def test_remote_output_rel(self):
+        rel = "studio/projects/2026-11-21-口播/03_content-lock/v1/video/content-only.mp4"
+        self.assertEqual(remote.remote_output_rel(rel), rel)
+        self.assertEqual(remote.remote_output_rel("studio\\x\\a.mp4"), "studio/x/a.mp4")
+        self.assertIsNone(remote.remote_output_rel(None))
+        for bad in ("../x.mp4", "C:/Users/J/x.mp4", "studio/a:b/x.mp4", "studio/x.mov", "studio//x.mp4"):
+            with self.assertRaises(JyError, msg=bad):
+                remote.remote_output_rel(bad)
+
+    def test_is_windows_path(self):
+        from jy_cli import ffmpeg
+
+        self.assertTrue(ffmpeg.is_windows_path("C:/a/b.mov"))
+        self.assertTrue(ffmpeg.is_windows_path("d:\\a.mov"))
+        self.assertFalse(ffmpeg.is_windows_path("/Users/u/a.mov"))
+        self.assertFalse(ffmpeg.is_windows_path("C:a.mov"))
+
+    def test_remote_probe_rejects_bad_input_before_ssh(self):
+        from jy_cli import ffmpeg
+
+        with self.assertRaises(JyError):
+            ffmpeg.probe_media_remote("bad host", "C:/a.mov")
+        with self.assertRaises(JyError):
+            ffmpeg.probe_media_remote("gamingpc", "C:/it's.mov")
+        with self.assertRaises(JyError):
+            ffmpeg.probe_media_remote("gamingpc", "/Users/u/a.mov")
+
+    def test_draft_build_with_pc_media(self):
+        import tempfile
+        from unittest import mock
+        from jy_cli import draft, ffmpeg
+
+        pc = "C:/Users/J/studio/projects/p/00_source/media/source.mov"
+        raw = {"format": {"duration": "12.5", "size": "1000"},
+               "streams": [{"codec_type": "video", "codec_name": "hevc", "width": 1080, "height": 1920,
+                            "r_frame_rate": "30/1"},
+                           {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000", "channels": 2}]}
+        fake = dict(ffmpeg._normalize(pc, raw, local=False), host="gamingpc")
+        with tempfile.TemporaryDirectory() as tmp:
+            spec = Path(tmp, "spec.json")
+            spec.write_text(json.dumps({"clips": [{"path": pc, "source_start": 1, "duration": 5}]}), "utf-8")
+            with self.assertRaises(JyError) as ctx:
+                draft.build(None, spec, Path(tmp, "d1"))
+            self.assertIn("--media-host", ctx.exception.message)
+            with mock.patch.object(ffmpeg, "probe_media_remote", return_value=fake) as probe:
+                data = draft.build(None, spec, Path(tmp, "d2"), media_host="gamingpc")
+            probe.assert_called_once_with("gamingpc", pc)
+            info = json.loads(Path(data["draft_info"]).read_text("utf-8"))
+            self.assertEqual(info["materials"]["videos"][0]["path"], pc)
+            self.assertEqual(info["canvas_config"]["width"], 1080)
+
+
 if __name__ == "__main__":
     unittest.main()
