@@ -107,6 +107,7 @@ git clone https://github.com/risingjerry/jianying-agent-cli.git && cd jianying-a
 |---|---|
 | `jy draft build --spec spec.json -o DIR` | 从时间线规格生成草稿工程（含 `.jy-spec.json` 记录，供降级重渲染）；`-o` 在剪映草稿根目录内时**自动登记进首页列表**（`--no-register` 关） |
 | `jy render DIR -o out.mp4 [--async] [--on-entitlement fail\|local] [--preflight] [--focus-guard watch\|restore\|off]` | 调剪映原生导出器渲染草稿；带焦点守卫、冷启动重试、崩溃重发现、跨进程渲染锁 |
+| `jy render DIR -o out.mp4 --remote HOST [--fetch]` | 交给 Windows 电脑上的剪映出片（打包草稿+素材、改路径、scp、PC 导出）；成片默认留在 PC，`--fetch` 拷回（见下方「远程渲染」） |
 | `jy effects list\|search\|params` | 剪映素材目录（内置 269 条：id / 中文名 / 类型 / 参数；可用 ~/.config/jy/effects_catalog.json 覆盖） |
 | `jy effects cached [--kind K] [--search NAME] [--limit N] [--refresh]` | **本机剪映缓存里真正已下载、能渲染的素材**：kind / 中文名 / resource_id / `status:"cached"` / 可直接粘进 spec 的片段（见 §9.2） |
 | `jy effects search-remote KEYWORD [--kind K] [--limit N] [--offline]` | 搜剪映在线素材目录（+本机缓存列表回退）：`status cached\|remote`、`source live\|cache`、`vip`、`downloadable`（见 §9.3） |
@@ -140,6 +141,38 @@ git clone https://github.com/risingjerry/jianying-agent-cli.git && cd jianying-a
 | 文字/字幕样式 | **已验证可用**（颜色/字号/描边/位置） |
 | 转场 / 滤镜 / 画面特效 / 贴纸 / 美颜 / 抠像 / 花字 | 已按剪映 GUI 草稿的结构接线，并在作者机器（剪映 11.6，素材包已缓存）上逐帧像素验证（见 §9、`jy material status`）。**素材包未缓存或容器写错时，剪映会静默无效或渲染黑帧且不报错**——出片后务必用 `jy frame` 抽帧核对；只要确定性效果时用本地 `jy transition`/`jy filter` |
 
+
+#### 远程渲染：交给 Windows 电脑上的剪映（`--remote`）
+
+Windows 版剪映（实测 11.8.0.14778）带着和 Mac 版一样的 native bridge，所以 Mac 上写好的草稿可以交给局域网里一台
+Windows 电脑出片，Mac 不用开剪映、前台也不被打扰：
+
+```bash
+jy render DIR -o 成片.mp4 --remote gamingpc               # 成片留在 PC：%USERPROFILE%\studio\outputs\<草稿名>\成片.mp4
+jy render DIR -o ~/out/成片.mp4 --remote gamingpc --fetch  # 另外拷回 Mac 的 -o 路径并 ffprobe
+jy render DIR -o 成片.mp4 --remote gamingpc --preflight    # 只读：PC 剪映状态 + 每条路径会怎么改写
+```
+
+- `--remote` 的值是 `~/.ssh/config` 里的主机别名；只用 ssh/scp（BatchMode，不问密码）。PC 端需要 Windows 自带的 `tar`、PowerShell 5.1，
+  以及 `%USERPROFILE%\pcwork\run-gui.ps1`（只有 `--relaunch-app` 用它在桌面会话里启动剪映）。
+- **流程**：体检（游戏模式 `pcwork\game-mode.on`、剪映版本目录、bridge 三态、是否登录）→ 复制草稿、把所有明文 JSON 里的 Mac 绝对路径改成
+  Windows 路径 → 打成 tar 用 scp 送到 `%USERPROFILE%\studio\jobs\jianying\<job>\` → PC 上调 film-export →
+  成片移到 `studio\outputs\<草稿名>\<-o 的文件名>` → 删掉 job 目录（成片不删）。
+- **路径怎么改**（`data.remote.path_report[]` 逐条列出）：
+  | Mac 路径 | PC 上 |
+  |---|---|
+  | 草稿目录内 / 草稿目录的上级 | job 目录里的 `draft\` / job 目录 |
+  | `/Applications/VideoFusion-macOS.app/Contents/Resources/…`（系统字体等） | `%LOCALAPPDATA%\JianyingPro\Apps\<最新版本>\Resources\…`；PC 没有就按文件名在 `Resources\Font` 下找，再没有就拷过去 |
+  | 剪映缓存里的素材包 `Cache/{effect,artistEffect}/<id>/<md5>`（特效/滤镜/转场/花字/动画/贴纸） | PC 剪映缓存有同一包就直接用；有同 id 的别的版本就指向它；都没有就**把 Mac 的包装进 PC 剪映缓存**（同 `jy effects fetch` 的布局，带 `_modity_time.txt`，从不覆盖）。剪映只认自己缓存里的包，放在别处会静默无效 |
+  | 其他文件（素材、`~/Library/Fonts` 字体、音乐） | 拷进 job 的 `media\`，文件名改成 ASCII |
+  | Mac 上已经不存在的路径 | 原样保留并写进 warnings / `data.remote.unresolved`（PC 上同样会缺） |
+- **结果**：信封和本机渲染同形（`engine/draft/output/receipt/attempts/...`），另加 `data.remote`。不加 `--fetch` 时 `data.output.path`
+  是 PC 路径，校验方式是 PC 端读回 mp4 的 moov 盒、Mac 端解析出时长/分辨率/编码（PC 没装 ffprobe）；加 `--fetch` 时 `data.output` 是 Mac
+  上 ffprobe 的结果。PC 上同名成片已存在时需要 `--force`。
+- **错误**：PC 连不上 → `UNAVAILABLE`；正在打游戏 → `BLOCKED`（不渲染）；PC 剪映没开 → `UNAVAILABLE`，提示加 `--relaunch-app`（会在他桌面上弹出剪映窗口）；
+  bridge 卡死 → `UNAVAILABLE`（jy 不远程杀他的剪映）；没登录 → `UNAVAILABLE`；剪映自己的拒绝（会员、缺素材……）映射成和本机一样的错误码。
+- **限制**：剪映在 GUI 里保存过的草稿 `draft_info.json` 是加密的，路径改不了 → `UNSUPPORTED`，请用 `jy draft build` 生成的明文草稿。
+  token 和账号上下文只在 PC 脚本内用，不回传、不落盘。
 
 ### 3.8 音效库（`jy sfx`，纯本地）
 

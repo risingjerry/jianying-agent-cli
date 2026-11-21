@@ -841,6 +841,39 @@ def _bridge_to_jy_error(exc):
     return jianying.to_jy_error(exc)
 
 
+def _render_remote(ctx, args, resolved):
+    """``--remote HOST``: same draft, rendered by 剪映 on a Windows PC (see remote.py)."""
+    from . import remote
+
+    timeout_ms = int(getattr(args, "timeout_ms", jianying.DEFAULT_TIMEOUT_MS))
+    if timeout_ms < 5_000:
+        raise JyError("VALIDATION", "--timeout-ms 至少 5000")
+    tool = ctx.require()
+    target = None
+    if getattr(args, "fetch", False):
+        target = _checked_output(args.output, args.force)
+    info_path = resolved["info_path"]
+    summary = _draft_summary(info_path)
+    outcome, data = remote.render_remote(
+        ctx, args, tool=tool, resolved=resolved, summary=summary,
+        sha256=_sha256(info_path), target=target, bridge_error=_bridge_to_jy_error,
+    )
+    if outcome != "executed":
+        return outcome, data
+    root = resolved["draft_dir"]
+    cleanup = data["cleanup"]
+    if jobs.is_scratch_draft(root) and not getattr(args, "keep_draft", False):
+        cleanup.update(jobs.remove_scratch_draft(root))
+        cleanup["kept"] = False
+        ctx.warnings.append(f"已清理 jy 的临时草稿：{root}（--keep-draft 可保留）")
+    if not getattr(args, "fetch", False):
+        ctx.warnings.append(
+            f"成片留在 {args.remote} 上：{data['remote']['output_path']}（加 --fetch 同时拷回 {args.output}）。"
+        )
+    data["note"] = ENGINE_NOTE + " --remote：在远程 Windows 剪映上导出，Mac 只负责打包和校验。"
+    return outcome, data
+
+
 def render(ctx, args):
     """Render a draft folder to MP4 through the 剪映 native film-export job."""
     if getattr(args, "engine", "jianying") == "local":
@@ -853,6 +886,10 @@ def render(ctx, args):
     resolved = _resolve_draft_dir(args.draft)
     root = resolved["draft_dir"]
     info_path = resolved["info_path"]
+    if getattr(args, "remote", None):
+        return _render_remote(ctx, args, resolved)
+    if getattr(args, "fetch", False):
+        raise JyError("VALIDATION", "--fetch 只和 --remote 一起用（把远程成片拷回 -o）")
     target = _checked_output(args.output, args.force)
     timeout_ms = int(getattr(args, "timeout_ms", jianying.DEFAULT_TIMEOUT_MS))
     if timeout_ms < 5_000:

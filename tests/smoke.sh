@@ -2775,6 +2775,13 @@ else
     fail "sfx checks" "$(echo "$sfx_out" | tail -c 700)"
 fi
 
+# -- render --remote: path rewrite / mp4 check / error mapping (no PC needed) --
+if remote_out="$("$PY" -m unittest discover -s "$ROOT/tests" -p 'test_remote.py' 2>&1)"; then
+    pass "render --remote unit tests [$(echo "$remote_out" | grep -E '^Ran ' | head -1)]"
+else
+    fail "render --remote unit tests" "$(echo "$remote_out" | tail -c 700)"
+fi
+
 echo
 echo "----------------------------------------"
 printf 'smoke summary: %d passed, %d failed, %d skipped\n' "$PASS" "$FAIL" "$SKIP"

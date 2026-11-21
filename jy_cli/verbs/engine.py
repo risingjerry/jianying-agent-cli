@@ -121,5 +121,18 @@ def register(r):
         action="store_true",
         help="do not delete a jy-authored scratch draft after a successful render",
     )
+    render.add_argument(
+        "--remote",
+        metavar="SSH_HOST",
+        default=None,
+        help="render on a Windows PC's 剪映 over ssh (e.g. gamingpc): packs the draft + media, "
+        "rewrites Mac paths, exports there; the mp4 stays at %%USERPROFILE%%\\studio\\outputs\\"
+        "<draft>\\<-o name>. --relaunch-app lets it start 剪映 on the PC desktop",
+    )
+    render.add_argument(
+        "--fetch",
+        action="store_true",
+        help="with --remote: also copy the mp4 back to -o and ffprobe it",
+    )
     render.set_defaults(focus_mode="watch")
     r.bind(render, "render", jianying_commands.render)

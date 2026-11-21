@@ -90,7 +90,7 @@ Then just ask: *"Cut these three clips into a 15-second vertical video with a ti
 | Text & subtitles | `text` `subtitle` (burn in / export SRT) `asr` (local whisper.cpp) |
 | Audio | `audio` (volume, fades, BGM mix/replace, ducking, loudnorm, denoise) `extract-audio` |
 | Output | `export` `gif` `frame` `cover` `batch` |
-| 剪映 engine | `draft build` (auto-lists in 剪映) `draft register/import` `render` `effects list/search/params` `material status` `fonts` |
+| 剪映 engine | `draft build` (auto-lists in 剪映) `draft register/import` `render` (`--remote HOST` renders on a Windows PC) `effects list/search/params` `material status` `fonts` |
 | Sound effects | `sfx index/search/add/list/label/forget` — harvest the SFX you downloaded in 剪映, mix one into a video at `--at` (no network, no GUI) |
 | Projects | `draft list/rename/duplicate/delete/move/history` `draft register/import` `asset import/list/prune` |
 | App hygiene | `update status/lock/unlock` — stop 剪映's Sparkle auto-updater reversibly (no binary patch) |
@@ -110,7 +110,22 @@ jy <verb> ───┤
 
 - **Local engine**: picks the most capable ffmpeg on the machine, validates every parameter, builds filter graphs, and verifies the result.
 - **jianying engine**: writes a timeline as a plain 剪映 draft and asks the **running** 剪映 app to export it through the localhost bridge it already exposes. No UI automation, no pointer movement. A focus guard hands the foreground back to your app if 剪映 raises its window. Protocol notes: [docs/BRIDGE.md](docs/BRIDGE.md).
-- `jy` itself makes **no network requests**. 剪映 may talk to its own servers (material downloads); that traffic is the app's.
+- `jy` itself makes **no network requests** (the opt-in `--remote HOST` only runs `ssh`/`scp` to the host you name). 剪映 may talk to its own servers (material downloads); that traffic is the app's.
+
+### Rendering on another machine (`--remote`)
+
+The Windows build of 剪映 exposes the same bridge, so a Mac-authored draft can be exported by 剪映 on a Windows PC on your LAN:
+
+```bash
+jy render my-draft -o final.mp4 --remote gamingpc           # mp4 stays on the PC: %USERPROFILE%\studio\outputs\<draft>\final.mp4
+jy render my-draft -o ~/out/final.mp4 --remote gamingpc --fetch   # also copy it back and ffprobe it
+jy render my-draft -o final.mp4 --remote gamingpc --preflight     # read-only: PC state + how every path will be rewritten
+```
+
+`jy` copies the draft, rewrites every absolute Mac path in its JSON (media and user fonts travel in the job folder; 剪映 app fonts map to the PC's install;
+cached effect/filter/transition packages are used from the PC's 剪映 cache or installed into it, because 剪映 ignores packages anywhere else),
+sends it over `scp`, runs the export through a PowerShell script over `ssh`, and deletes the PC job folder. The bridge token and account context never
+leave the PC. Needs an `ssh` host alias with key login; drafts that 剪映 itself saved (encrypted `draft_info.json`) are refused. Details: [USAGE.md](USAGE.md) 「远程渲染」.
 
 ### Sound effects, locally
 

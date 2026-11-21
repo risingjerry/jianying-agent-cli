@@ -46,6 +46,8 @@ jy draft build --spec spec.json -o ./draft --fetch | jq '.data | {engine, tracks
 # 5) Render with 剪映 (long jobs always async)
 jy render ./draft -o final.mp4 --async          # returns a job id
 jy jobs wait <job-id>
+# or hand it to 剪映 on a Windows PC (ssh alias); mp4 stays there unless --fetch
+# jy render ./draft -o final.mp4 --remote gamingpc --fetch
 
 # 6) Verify every material actually shows up (mandatory — see "Delivery discipline")
 jy frame final.mp4 --at 10% -o f1.png ; jy frame final.mp4 --at 50% -o f2.png ; jy frame final.mp4 --at 90% -o f3.png

@@ -21,6 +21,11 @@ ffmpeg logs go to stderr only. A portable Agent Skill lives in `skills/jianying-
   running. It does **not** click the UI, does not move the mouse pointer and does not open a window
   for the export path.
 
+`jy render --remote HOST` sends a plaintext draft to 剪映 on a Windows PC over ssh/scp (see USAGE「远程渲染」).
+It rewrites Mac paths in a *copy* of the draft, may install missing effect packages into the PC's 剪映 cache (never
+overwriting), keeps the mp4 on the PC unless `--fetch`, and always deletes the PC job folder. Path-rewrite tests:
+`python3 -m unittest discover -s tests -p 'test_remote.py'` (also run by smoke.sh).
+
 `jy doctor` reports both engines and their capability matrix. Pick `--engine` explicitly when it
 matters; never assume the 剪映 engine is available.
 
